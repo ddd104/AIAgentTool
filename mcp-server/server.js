@@ -164,9 +164,9 @@ server.registerTool(
 server.registerTool(
   "create_asset",
   {
-    description: "Create a supported asset: Blueprint, BlueprintInterface, Material, MaterialInstanceConstant, or UserDefinedStruct.",
+    description: "Create a supported asset: Blueprint, BlueprintInterface, WidgetBlueprint, Material, MaterialInstanceConstant, or UserDefinedStruct.",
     inputSchema: z.object({
-      assetType: z.enum(["Blueprint", "BlueprintInterface", "Material", "MaterialInstanceConstant", "UserDefinedStruct"]),
+      assetType: z.enum(["Blueprint", "BlueprintInterface", "WidgetBlueprint", "Material", "MaterialInstanceConstant", "UserDefinedStruct"]),
       path: z.string(),
       parentClass: z.string().optional(),
       parentMaterial: z.string().optional(),

@@ -32,6 +32,7 @@ namespace
     constexpr const TCHAR* TestBlueprintPath = TEXT("/Game/ABT_Automation/BP_ABT_RoundTrip");
     constexpr const TCHAR* TestInterfacePath = TEXT("/Game/ABT_Automation/BPI_ABT_RoundTrip");
     constexpr const TCHAR* TestStructPath = TEXT("/Game/ABT_Automation/ST_ABT_MoveConfig_RoundTrip");
+    constexpr const TCHAR* TestWidgetPath = TEXT("/Game/ABT_Automation/WBP_ABT_ButtonPages_RoundTrip");
     constexpr const TCHAR* TestMaterialPath = TEXT("/Game/ABT_Automation/M_ABT_RoundTrip");
     constexpr const TCHAR* TestMaterialInstancePath = TEXT("/Game/ABT_Automation/MI_ABT_RoundTrip");
 
@@ -120,6 +121,7 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
     DeleteAssetIfExists(TestBlueprintPath);
     DeleteAssetIfExists(TestInterfacePath);
     DeleteAssetIfExists(TestStructPath);
+    DeleteAssetIfExists(TestWidgetPath);
     DeleteAssetIfExists(TestMaterialPath);
     UEditorAssetLibrary::MakeDirectory(TestRoot);
 
@@ -226,6 +228,35 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
     ReadStructRequest->SetStringField(TEXT("assetPath"), ABTJson::GetString(Json, TEXT("asset_path")));
     TestTrue(TEXT("Read UserDefinedStruct asset"), FABTAssetTools::ReadAsset(ReadStructRequest, Json, Error));
     TestTrue(TEXT("Struct includes Speed field"), JsonArrayContainsObjectString(Json, TEXT("fields"), TEXT("name"), TEXT("Speed")));
+
+    TSharedPtr<FJsonObject> WidgetRequest = MakeCreateAssetRequest(TEXT("WidgetBlueprint"), TestWidgetPath);
+    WidgetRequest->SetStringField(TEXT("parentClass"), TEXT("/Script/UMG.UserWidget"));
+    TestTrue(TEXT("Create Widget Blueprint asset"), FABTAssetTools::CreateAsset(WidgetRequest, Json, Error));
+    const FString WidgetPath = ABTJson::GetString(Json, TEXT("asset_path"));
+
+    TSharedPtr<FJsonObject> WidgetPatch = ABTJson::Object();
+    WidgetPatch->SetStringField(TEXT("target"), WidgetPath);
+    TArray<TSharedPtr<FJsonValue>> WidgetOps;
+    TSharedPtr<FJsonObject> WidgetOp = MakeOp(TEXT("configure_button_pages_widget"));
+    TArray<TSharedPtr<FJsonValue>> Pages;
+    for (int32 Index = 0; Index < 3; ++Index)
+    {
+        TSharedPtr<FJsonObject> Page = ABTJson::Object();
+        Page->SetStringField(TEXT("buttonText"), FString::Printf(TEXT("Tab %d"), Index + 1));
+        Page->SetStringField(TEXT("title"), FString::Printf(TEXT("Page %d"), Index + 1));
+        Page->SetStringField(TEXT("body"), TEXT("Automation page"));
+        Pages.Add(ABTJson::ObjectValue(Page));
+    }
+    WidgetOp->SetArrayField(TEXT("pages"), Pages);
+    WidgetOps.Add(ABTJson::ObjectValue(WidgetOp));
+    WidgetPatch->SetArrayField(TEXT("operations"), WidgetOps);
+    TestTrue(TEXT("Dry-run Widget patch"), FABTBlueprintTools::DryRunPatch(WidgetPatch, Json, Error));
+    TestTrue(TEXT("Widget patch is valid"), Json->GetBoolField(TEXT("valid")));
+    TestTrue(TEXT("Apply Widget patch"), FABTBlueprintTools::ApplyPatch(WidgetPatch, true, Json, Error));
+    TestTrue(TEXT("Widget Blueprint compile ok"), Json->GetObjectField(TEXT("compile"))->GetBoolField(TEXT("compile_ok")));
+    TestTrue(TEXT("Read Widget Blueprint IR"), FABTBlueprintTools::ExportBlueprint(WidgetPath, Json, Error));
+    TestTrue(TEXT("Widget has first page button"), JsonArrayContainsObjectString(Json, TEXT("widgets"), TEXT("name"), TEXT("PageButton_0")));
+    TestTrue(TEXT("Widget has first popup page"), JsonArrayContainsObjectString(Json, TEXT("widgets"), TEXT("name"), TEXT("PagePanel_0")));
 
     TestTrue(TEXT("Create Blueprint Interface asset"), FABTAssetTools::CreateAsset(MakeCreateAssetRequest(TEXT("BlueprintInterface"), TestInterfacePath), Json, Error));
     TSharedPtr<FJsonObject> ReadInterfaceRequest = ABTJson::Object();

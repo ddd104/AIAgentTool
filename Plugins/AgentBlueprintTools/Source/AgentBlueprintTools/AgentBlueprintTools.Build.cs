@@ -27,9 +27,13 @@ public class AgentBlueprintTools : ModuleRules
             "Kismet",
             "KismetCompiler",
             "MaterialEditor",
+            "MovieScene",
+            "MovieSceneTracks",
             "Projects",
             "Slate",
             "SlateCore",
+            "UMG",
+            "UMGEditor",
             "UnrealEd"
         });
     }

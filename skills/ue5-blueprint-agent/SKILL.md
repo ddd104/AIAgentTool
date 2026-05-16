@@ -39,6 +39,7 @@ Use the `ue5_agent_blueprint_tools` MCP server. Never edit `.uasset` files direc
 - `ensure_component`
 - `set_static_mesh`
 - `set_component_material`
+- `configure_button_pages_widget`
 - `add_node`
 - `set_pin_default`
 - `connect_exec`
@@ -55,6 +56,8 @@ Use the `ue5_agent_blueprint_tools` MCP server. Never edit `.uasset` files direc
 ## Asset flow
 
 Use `create_asset`, `read_asset`, `set_asset_property`, `save_asset`, and `delete_asset` rather than raw file writes. Only delete known temporary assets or assets the user explicitly asked to remove.
+
+Use `create_asset` with `assetType: WidgetBlueprint` for UMG widgets. For button-list popup page widgets, prefer `configure_button_pages_widget` over hand-building UMG widget trees and button graph logic.
 
 Use `place_actor` to place an Actor Blueprint or Actor class in the current editor level. Leave `saveLevel` false unless the user asks to save the level.
 

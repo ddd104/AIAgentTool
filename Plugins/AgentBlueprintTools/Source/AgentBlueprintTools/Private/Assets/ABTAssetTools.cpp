@@ -10,6 +10,8 @@
 #include "FileHelpers.h"
 #include "Factories/BlueprintFactory.h"
 #include "Factories/MaterialFactoryNew.h"
+#include "WidgetBlueprint.h"
+#include "WidgetBlueprintFactory.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/StructureEditorUtils.h"
 #include "Materials/Material.h"
@@ -23,6 +25,7 @@
 #include "UObject/Interface.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
+#include "Blueprint/UserWidget.h"
 
 namespace
 {
@@ -325,6 +328,26 @@ bool FABTAssetTools::CreateAsset(const TSharedPtr<FJsonObject>& Request, TShared
         }
         Factory->ParentClass = ParentClass;
         Created = AssetTools.CreateAsset(AssetName, PackagePath, UBlueprint::StaticClass(), Factory);
+    }
+    else if (AssetType.Equals(TEXT("WidgetBlueprint"), ESearchCase::IgnoreCase))
+    {
+        UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
+        Factory->BlueprintType = BPTYPE_Normal;
+        Factory->ParentClass = UUserWidget::StaticClass();
+        const FString ParentClassPath = ABTJson::GetString(Request, TEXT("parentClass"));
+        if (!ParentClassPath.IsEmpty())
+        {
+            if (UClass* Resolved = ResolveClass(ParentClassPath))
+            {
+                if (!Resolved->IsChildOf(UUserWidget::StaticClass()))
+                {
+                    OutError = FString::Printf(TEXT("WidgetBlueprint parentClass must derive from UserWidget: %s"), *ParentClassPath);
+                    return false;
+                }
+                Factory->ParentClass = Resolved;
+            }
+        }
+        Created = AssetTools.CreateAsset(AssetName, PackagePath, UWidgetBlueprint::StaticClass(), Factory);
     }
     else if (AssetType.Equals(TEXT("UserDefinedStruct"), ESearchCase::IgnoreCase))
     {

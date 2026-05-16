@@ -4,8 +4,18 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "BlueprintActionDatabase.h"
 #include "Components/ActorComponent.h"
+#include "Components/Border.h"
+#include "Components/Button.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
 #include "Components/MeshComponent.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/TextBlock.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Components/Widget.h"
 #include "EditorAssetLibrary.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
@@ -33,6 +43,8 @@
 #include "UObject/UnrealType.h"
 #include "Editor.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Blueprint/WidgetTree.h"
+#include "WidgetBlueprint.h"
 
 namespace
 {
@@ -324,10 +336,149 @@ namespace
         {
             // function is optional here; the op defaults to MoveByDelta.
         }
+        else if (OpName == TEXT("configure_button_pages_widget"))
+        {
+            // pages is optional; the tool supplies useful defaults for quick UMG prototypes.
+        }
         else
         {
             OutMessages.Add(FString::Printf(TEXT("Unsupported op: %s."), *OpName));
         }
+    }
+
+    TArray<TSharedPtr<FJsonObject>> ReadPageSpecs(const TSharedPtr<FJsonObject>& Op)
+    {
+        TArray<TSharedPtr<FJsonObject>> Result;
+        const TArray<TSharedPtr<FJsonValue>>* Pages = nullptr;
+        if (Op.IsValid() && Op->TryGetArrayField(TEXT("pages"), Pages) && Pages)
+        {
+            for (const TSharedPtr<FJsonValue>& Value : *Pages)
+            {
+                if (Value.IsValid() && Value->AsObject().IsValid())
+                {
+                    Result.Add(Value->AsObject());
+                }
+            }
+        }
+
+        if (Result.Num() == 0)
+        {
+            for (int32 Index = 0; Index < 3; ++Index)
+            {
+                TSharedPtr<FJsonObject> Page = ABTJson::Object();
+                Page->SetStringField(TEXT("buttonText"), FString::Printf(TEXT("Page %d"), Index + 1));
+                Page->SetStringField(TEXT("title"), FString::Printf(TEXT("Sub Page %d"), Index + 1));
+                Page->SetStringField(TEXT("body"), TEXT("Created by AgentBlueprintTools."));
+                Result.Add(Page);
+            }
+        }
+
+        return Result;
+    }
+
+    bool ConfigureButtonPagesWidget(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError)
+    {
+        UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(Blueprint);
+        if (!WidgetBlueprint)
+        {
+            OutError = TEXT("configure_button_pages_widget requires a WidgetBlueprint target");
+            return false;
+        }
+        if (!WidgetBlueprint->WidgetTree)
+        {
+            WidgetBlueprint->WidgetTree = NewObject<UWidgetTree>(WidgetBlueprint, TEXT("WidgetTree"), RF_Transactional);
+        }
+
+        UWidgetTree* Tree = WidgetBlueprint->WidgetTree;
+        Tree->Modify();
+
+        const TArray<TSharedPtr<FJsonObject>> Pages = ReadPageSpecs(Op);
+        if (Pages.Num() > 10)
+        {
+            OutError = TEXT("configure_button_pages_widget supports at most 10 pages");
+            return false;
+        }
+
+        UVerticalBox* Root = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("Root"));
+        UHorizontalBox* ButtonList = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("ButtonList"));
+        UOverlay* PageLayer = Tree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("PageLayer"));
+
+        if (!Root || !ButtonList || !PageLayer)
+        {
+            OutError = TEXT("Failed to construct widget tree");
+            return false;
+        }
+
+        Tree->RootWidget = Root;
+        if (UVerticalBoxSlot* ButtonSlot = Root->AddChildToVerticalBox(ButtonList))
+        {
+            ButtonSlot->SetPadding(FMargin(16.0f, 16.0f, 16.0f, 8.0f));
+            ButtonSlot->SetHorizontalAlignment(HAlign_Center);
+        }
+        if (UVerticalBoxSlot* PageSlot = Root->AddChildToVerticalBox(PageLayer))
+        {
+            PageSlot->SetPadding(FMargin(16.0f, 8.0f, 16.0f, 16.0f));
+            PageSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+        }
+
+        for (int32 Index = 0; Index < Pages.Num(); ++Index)
+        {
+            const TSharedPtr<FJsonObject>& Page = Pages[Index];
+            const FString ButtonText = ABTJson::GetString(Page, TEXT("buttonText"), FString::Printf(TEXT("Page %d"), Index + 1));
+            const FString TitleText = ABTJson::GetString(Page, TEXT("title"), ButtonText);
+            const FString BodyText = ABTJson::GetString(Page, TEXT("body"), TEXT(""));
+
+            UButton* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), *FString::Printf(TEXT("PageButton_%d"), Index));
+            UTextBlock* ButtonLabel = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), *FString::Printf(TEXT("PageButtonLabel_%d"), Index));
+            UBorder* PagePanel = Tree->ConstructWidget<UBorder>(UBorder::StaticClass(), *FString::Printf(TEXT("PagePanel_%d"), Index));
+            UVerticalBox* PageContent = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), *FString::Printf(TEXT("PageContent_%d"), Index));
+            UTextBlock* PageTitle = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), *FString::Printf(TEXT("PageTitle_%d"), Index));
+            UTextBlock* PageBody = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), *FString::Printf(TEXT("PageBody_%d"), Index));
+
+            if (!Button || !ButtonLabel || !PagePanel || !PageContent || !PageTitle || !PageBody)
+            {
+                OutError = TEXT("Failed to construct a button page widget");
+                return false;
+            }
+
+            Button->bIsVariable = true;
+            PagePanel->bIsVariable = true;
+
+            ButtonLabel->SetText(FText::FromString(ButtonText));
+            ButtonLabel->SetJustification(ETextJustify::Center);
+            Button->AddChild(ButtonLabel);
+            if (UHorizontalBoxSlot* ButtonBoxSlot = ButtonList->AddChildToHorizontalBox(Button))
+            {
+                ButtonBoxSlot->SetPadding(FMargin(4.0f, 0.0f));
+            }
+
+            PageTitle->SetText(FText::FromString(TitleText));
+            PageTitle->SetJustification(ETextJustify::Center);
+            PageBody->SetText(FText::FromString(BodyText));
+            PageBody->SetAutoWrapText(true);
+            PageBody->SetJustification(ETextJustify::Center);
+            PageContent->AddChildToVerticalBox(PageTitle);
+            PageContent->AddChildToVerticalBox(PageBody);
+
+            PagePanel->SetPadding(FMargin(24.0f));
+            PagePanel->SetVisibility(ESlateVisibility::Collapsed);
+            PagePanel->SetRenderOpacity(0.5f);
+            FWidgetTransform Transform = PagePanel->GetRenderTransform();
+            Transform.Scale = FVector2D(0.2f, 0.2f);
+            PagePanel->SetRenderTransform(Transform);
+            PagePanel->AddChild(PageContent);
+
+            if (UOverlaySlot* OverlaySlot = PageLayer->AddChildToOverlay(PagePanel))
+            {
+                OverlaySlot->SetHorizontalAlignment(HAlign_Center);
+                OverlaySlot->SetVerticalAlignment(VAlign_Center);
+                OverlaySlot->SetPadding(FMargin(24.0f));
+            }
+        }
+
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+        OutMessages.Add(FString::Printf(TEXT("Configured button pages widget with %d pages"), Pages.Num()));
+        return true;
     }
 
     UK2Node_Event* FindBeginPlayEvent(UEdGraph* Graph)
@@ -669,6 +820,33 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
         }
     }
     OutJson->SetArrayField(TEXT("components"), Components);
+
+    if (UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(Blueprint))
+    {
+        TArray<TSharedPtr<FJsonValue>> Widgets;
+        if (WidgetBlueprint->WidgetTree)
+        {
+            TArray<UWidget*> AllWidgets;
+            WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
+            for (UWidget* Widget : AllWidgets)
+            {
+                if (!Widget) continue;
+                TSharedPtr<FJsonObject> W = ABTJson::Object();
+                W->SetStringField(TEXT("name"), Widget->GetName());
+                W->SetStringField(TEXT("class"), Widget->GetClass()->GetPathName());
+                W->SetBoolField(TEXT("is_variable"), Widget->bIsVariable);
+                W->SetStringField(TEXT("visibility"), StaticEnum<ESlateVisibility>()->GetNameStringByValue(static_cast<int64>(Widget->GetVisibility())));
+                W->SetNumberField(TEXT("render_opacity"), Widget->GetRenderOpacity());
+                const FWidgetTransform Transform = Widget->GetRenderTransform();
+                TArray<TSharedPtr<FJsonValue>> Scale;
+                Scale.Add(MakeShared<FJsonValueNumber>(Transform.Scale.X));
+                Scale.Add(MakeShared<FJsonValueNumber>(Transform.Scale.Y));
+                W->SetArrayField(TEXT("render_scale"), Scale);
+                Widgets.Add(ABTJson::ObjectValue(W));
+            }
+        }
+        OutJson->SetArrayField(TEXT("widgets"), Widgets);
+    }
 
     TSharedPtr<FJsonObject> Summary = ABTJson::Object();
     TArray<TSharedPtr<FJsonValue>> EntryPoints;
@@ -1014,6 +1192,11 @@ bool FABTBlueprintTools::ApplyOperation(UBlueprint* Blueprint, const TSharedPtr<
 
         OutMessages.Add(FString::Printf(TEXT("Ensured component %s (%s)"), *Name, *ComponentClass->GetName()));
         return true;
+    }
+
+    if (OpName == TEXT("configure_button_pages_widget"))
+    {
+        return ConfigureButtonPagesWidget(Blueprint, Op, OutMessages, OutError);
     }
 
     if (OpName == TEXT("set_static_mesh"))
