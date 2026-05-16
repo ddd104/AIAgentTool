@@ -1,0 +1,16 @@
+model = "gpt-5.5"
+approval_policy = "on-request"
+approvals_reviewer = "user"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false
+
+[mcp_servers.ue5_agent_blueprint_tools]
+command = "node"
+args = ["mcp-server/server.js"]
+cwd = "."
+enabled = true
+startup_timeout_sec = 20
+tool_timeout_sec = 180
+env = { ABT_BRIDGE_URL = "http://127.0.0.1:31055", ABT_BRIDGE_TOKEN = "change-me-local" }

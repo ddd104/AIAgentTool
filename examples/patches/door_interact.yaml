@@ -1,0 +1,44 @@
+target: /Game/Blueprints/BP_Door
+operations:
+  - op: ensure_variable
+    name: IsOpen
+    type: bool
+    default: false
+
+  - op: ensure_variable
+    name: OpenAngle
+    type: float
+    default: 90.0
+
+  - op: ensure_function
+    name: Interact
+
+  - op: add_node
+    graph: Interact
+    id: get_is_open
+    type: GetVariable
+    variable: IsOpen
+
+  - op: add_node
+    graph: Interact
+    id: branch_is_open
+    type: Branch
+
+  - op: add_node
+    graph: Interact
+    id: set_is_open
+    type: SetVariable
+    variable: IsOpen
+    value: true
+
+  - op: connect_exec
+    from: Entry.Then
+    to: branch_is_open.Execute
+
+  - op: connect_data
+    from: get_is_open.IsOpen
+    to: branch_is_open.Condition
+
+  - op: connect_exec
+    from: branch_is_open.False
+    to: set_is_open.Execute
