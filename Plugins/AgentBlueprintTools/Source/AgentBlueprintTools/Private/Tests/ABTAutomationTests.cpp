@@ -3,7 +3,9 @@
 #include "Misc/AutomationTest.h"
 #include "Assets/ABTAssetTools.h"
 #include "Blueprint/ABTBlueprintTools.h"
+#include "Editor.h"
 #include "EditorAssetLibrary.h"
+#include "GameFramework/Actor.h"
 #include "Materials/ABTMaterialTools.h"
 #include "Utils/ABTJson.h"
 
@@ -28,6 +30,8 @@ namespace
 {
     constexpr const TCHAR* TestRoot = TEXT("/Game/ABT_Automation");
     constexpr const TCHAR* TestBlueprintPath = TEXT("/Game/ABT_Automation/BP_ABT_RoundTrip");
+    constexpr const TCHAR* TestInterfacePath = TEXT("/Game/ABT_Automation/BPI_ABT_RoundTrip");
+    constexpr const TCHAR* TestStructPath = TEXT("/Game/ABT_Automation/ST_ABT_MoveConfig_RoundTrip");
     constexpr const TCHAR* TestMaterialPath = TEXT("/Game/ABT_Automation/M_ABT_RoundTrip");
     constexpr const TCHAR* TestMaterialInstancePath = TEXT("/Game/ABT_Automation/MI_ABT_RoundTrip");
 
@@ -71,6 +75,34 @@ namespace
         return false;
     }
 
+    bool JsonObjectArrayContainsString(
+        const TSharedPtr<FJsonObject>& Json,
+        const FString& ObjectName,
+        const FString& ArrayName,
+        const FString& Expected)
+    {
+        const TSharedPtr<FJsonObject>* Object = nullptr;
+        if (!Json.IsValid() || !Json->TryGetObjectField(ObjectName, Object) || !Object || !Object->IsValid())
+        {
+            return false;
+        }
+
+        const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+        if (!(*Object)->TryGetArrayField(ArrayName, Values) || !Values)
+        {
+            return false;
+        }
+
+        for (const TSharedPtr<FJsonValue>& Value : *Values)
+        {
+            if (Value->AsString() == Expected)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void DeleteAssetIfExists(const FString& AssetPath)
     {
         if (UEditorAssetLibrary::DoesAssetExist(AssetPath))
@@ -86,6 +118,8 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
 {
     DeleteAssetIfExists(TestMaterialInstancePath);
     DeleteAssetIfExists(TestBlueprintPath);
+    DeleteAssetIfExists(TestInterfacePath);
+    DeleteAssetIfExists(TestStructPath);
     DeleteAssetIfExists(TestMaterialPath);
     UEditorAssetLibrary::MakeDirectory(TestRoot);
 
@@ -130,6 +164,74 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
 
     TestTrue(TEXT("Read Blueprint IR"), FABTBlueprintTools::ExportBlueprint(BlueprintPath, Json, Error));
     TestTrue(TEXT("Blueprint IR includes variable"), JsonArrayContainsObjectString(Json, TEXT("variables"), TEXT("name"), TEXT("ABTHealth")));
+
+    TSharedPtr<FJsonObject> LoopPatch = ABTJson::Object();
+    LoopPatch->SetStringField(TEXT("target"), BlueprintPath);
+    TArray<TSharedPtr<FJsonValue>> LoopOps;
+    TSharedPtr<FJsonObject> LoopOp = MakeOp(TEXT("ensure_looping_move"));
+    LoopOp->SetStringField(TEXT("function"), TEXT("MoveByDelta"));
+    LoopOp->SetNumberField(TEXT("interval"), 0.15);
+    TArray<TSharedPtr<FJsonValue>> Delta;
+    Delta.Add(MakeShared<FJsonValueNumber>(25.0));
+    Delta.Add(MakeShared<FJsonValueNumber>(0.0));
+    Delta.Add(MakeShared<FJsonValueNumber>(0.0));
+    LoopOp->SetArrayField(TEXT("delta"), Delta);
+    LoopOps.Add(ABTJson::ObjectValue(LoopOp));
+    LoopPatch->SetArrayField(TEXT("operations"), LoopOps);
+
+    TestTrue(TEXT("Dry-run looping move patch"), FABTBlueprintTools::DryRunPatch(LoopPatch, Json, Error));
+    TestTrue(TEXT("Looping move patch is valid"), Json->GetBoolField(TEXT("valid")));
+    TestTrue(TEXT("Apply looping move patch"), FABTBlueprintTools::ApplyPatch(LoopPatch, true, Json, Error));
+    TestTrue(TEXT("Looping move Blueprint compile ok"), Json->GetObjectField(TEXT("compile"))->GetBoolField(TEXT("compile_ok")));
+
+    FABTBlueprintExportOptions SummaryOptions;
+    SummaryOptions.bIncludeGraphs = false;
+    SummaryOptions.bIncludePins = false;
+    TestTrue(TEXT("Read compact Blueprint summary"), FABTBlueprintTools::ExportBlueprint(BlueprintPath, Json, Error, SummaryOptions));
+    TestTrue(TEXT("Summary includes timer call"), JsonObjectArrayContainsString(Json, TEXT("semantic_summary"), TEXT("external_calls"), TEXT("K2_SetTimer")));
+    TestTrue(TEXT("Summary includes movement call"), JsonObjectArrayContainsString(Json, TEXT("semantic_summary"), TEXT("external_calls"), TEXT("K2_AddActorWorldOffset")));
+
+    TSharedPtr<FJsonObject> PlaceRequest = ABTJson::Object();
+    PlaceRequest->SetStringField(TEXT("assetPath"), BlueprintPath);
+    PlaceRequest->SetStringField(TEXT("label"), TEXT("ABT_RoundTrip_TransientMover"));
+    PlaceRequest->SetBoolField(TEXT("transient"), true);
+    TArray<TSharedPtr<FJsonValue>> Location;
+    Location.Add(MakeShared<FJsonValueNumber>(120.0));
+    Location.Add(MakeShared<FJsonValueNumber>(0.0));
+    Location.Add(MakeShared<FJsonValueNumber>(80.0));
+    PlaceRequest->SetArrayField(TEXT("location"), Location);
+    TestTrue(TEXT("Place transient moving actor"), FABTAssetTools::PlaceActor(PlaceRequest, Json, Error));
+    TestTrue(TEXT("Placed actor is transient"), Json->GetBoolField(TEXT("transient")));
+    const FString ActorPath = ABTJson::GetString(Json, TEXT("actor_path"));
+    if (AActor* Actor = FindObject<AActor>(nullptr, *ActorPath))
+    {
+        Actor->Destroy();
+    }
+
+    TSharedPtr<FJsonObject> StructRequest = MakeCreateAssetRequest(TEXT("UserDefinedStruct"), TestStructPath);
+    TArray<TSharedPtr<FJsonValue>> Fields;
+    TSharedPtr<FJsonObject> SpeedField = ABTJson::Object();
+    SpeedField->SetStringField(TEXT("name"), TEXT("Speed"));
+    SpeedField->SetStringField(TEXT("type"), TEXT("float"));
+    SpeedField->SetStringField(TEXT("default"), TEXT("300.0"));
+    Fields.Add(ABTJson::ObjectValue(SpeedField));
+    TSharedPtr<FJsonObject> DeltaField = ABTJson::Object();
+    DeltaField->SetStringField(TEXT("name"), TEXT("Delta"));
+    DeltaField->SetStringField(TEXT("type"), TEXT("vector"));
+    DeltaField->SetStringField(TEXT("default"), TEXT("(X=25.0,Y=0.0,Z=0.0)"));
+    Fields.Add(ABTJson::ObjectValue(DeltaField));
+    StructRequest->SetArrayField(TEXT("fields"), Fields);
+    TestTrue(TEXT("Create UserDefinedStruct asset"), FABTAssetTools::CreateAsset(StructRequest, Json, Error));
+    TSharedPtr<FJsonObject> ReadStructRequest = ABTJson::Object();
+    ReadStructRequest->SetStringField(TEXT("assetPath"), ABTJson::GetString(Json, TEXT("asset_path")));
+    TestTrue(TEXT("Read UserDefinedStruct asset"), FABTAssetTools::ReadAsset(ReadStructRequest, Json, Error));
+    TestTrue(TEXT("Struct includes Speed field"), JsonArrayContainsObjectString(Json, TEXT("fields"), TEXT("name"), TEXT("Speed")));
+
+    TestTrue(TEXT("Create Blueprint Interface asset"), FABTAssetTools::CreateAsset(MakeCreateAssetRequest(TEXT("BlueprintInterface"), TestInterfacePath), Json, Error));
+    TSharedPtr<FJsonObject> ReadInterfaceRequest = ABTJson::Object();
+    ReadInterfaceRequest->SetStringField(TEXT("assetPath"), ABTJson::GetString(Json, TEXT("asset_path")));
+    TestTrue(TEXT("Read Blueprint Interface asset"), FABTAssetTools::ReadAsset(ReadInterfaceRequest, Json, Error));
+    TestEqual(TEXT("Interface blueprint type"), ABTJson::GetString(Json, TEXT("blueprint_type")), FString(TEXT("BPTYPE_Interface")));
 
     TestTrue(TEXT("Create Material asset"), FABTAssetTools::CreateAsset(MakeCreateAssetRequest(TEXT("Material"), TestMaterialPath), Json, Error));
     const FString MaterialPath = ABTJson::GetString(Json, TEXT("asset_path"));

@@ -6,6 +6,7 @@
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
 #include "Engine/Blueprint.h"
+#include "EngineUtils.h"
 #include "FileHelpers.h"
 #include "Factories/BlueprintFactory.h"
 #include "Factories/MaterialFactoryNew.h"
@@ -19,6 +20,7 @@
 #include "Subsystems/EditorActorSubsystem.h"
 #include "EdGraphSchema_K2.h"
 #include "UserDefinedStructure/UserDefinedStructEditorData.h"
+#include "UObject/Interface.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
 
@@ -293,12 +295,12 @@ bool FABTAssetTools::CreateAsset(const TSharedPtr<FJsonObject>& Request, TShared
     UObject* Created = nullptr;
     IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
 
-    if (AssetType == TEXT("Material"))
+    if (AssetType.Equals(TEXT("Material"), ESearchCase::IgnoreCase))
     {
         UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
         Created = AssetTools.CreateAsset(AssetName, PackagePath, UMaterial::StaticClass(), Factory);
     }
-    else if (AssetType == TEXT("MaterialInstanceConstant"))
+    else if (AssetType.Equals(TEXT("MaterialInstanceConstant"), ESearchCase::IgnoreCase))
     {
         UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
         if (UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr, *ABTJson::GetString(Request, TEXT("parentMaterial"))))
@@ -307,10 +309,15 @@ bool FABTAssetTools::CreateAsset(const TSharedPtr<FJsonObject>& Request, TShared
         }
         Created = AssetTools.CreateAsset(AssetName, PackagePath, UMaterialInstanceConstant::StaticClass(), Factory);
     }
-    else if (AssetType == TEXT("Blueprint"))
+    else if (AssetType.Equals(TEXT("Blueprint"), ESearchCase::IgnoreCase) || AssetType.Equals(TEXT("BlueprintInterface"), ESearchCase::IgnoreCase))
     {
         UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
         UClass* ParentClass = AActor::StaticClass();
+        if (AssetType.Equals(TEXT("BlueprintInterface"), ESearchCase::IgnoreCase))
+        {
+            Factory->BlueprintType = BPTYPE_Interface;
+            ParentClass = UInterface::StaticClass();
+        }
         const FString ParentClassPath = ABTJson::GetString(Request, TEXT("parentClass"));
         if (!ParentClassPath.IsEmpty())
         {
@@ -319,7 +326,7 @@ bool FABTAssetTools::CreateAsset(const TSharedPtr<FJsonObject>& Request, TShared
         Factory->ParentClass = ParentClass;
         Created = AssetTools.CreateAsset(AssetName, PackagePath, UBlueprint::StaticClass(), Factory);
     }
-    else if (AssetType == TEXT("UserDefinedStruct"))
+    else if (AssetType.Equals(TEXT("UserDefinedStruct"), ESearchCase::IgnoreCase))
     {
         UPackage* Package = CreatePackage(*Path);
         UUserDefinedStruct* Struct = FStructureEditorUtils::CreateUserDefinedStruct(Package, *AssetName, RF_Public | RF_Standalone);
@@ -390,6 +397,13 @@ bool FABTAssetTools::ReadAsset(const TSharedPtr<FJsonObject>& Request, TSharedPt
     OutJson->SetStringField(TEXT("class"), Object->GetClass()->GetPathName());
     OutJson->SetStringField(TEXT("package"), Object->GetOutermost() ? Object->GetOutermost()->GetName() : FString());
     OutJson->SetBoolField(TEXT("dirty"), Object->GetOutermost() ? Object->GetOutermost()->IsDirty() : false);
+
+    if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
+    {
+        OutJson->SetStringField(TEXT("blueprint_type"), StaticEnum<EBlueprintType>()->GetNameStringByValue(Blueprint->BlueprintType));
+        OutJson->SetStringField(TEXT("parent_class"), Blueprint->ParentClass ? Blueprint->ParentClass->GetPathName() : FString());
+        OutJson->SetStringField(TEXT("generated_class"), Blueprint->GeneratedClass ? Blueprint->GeneratedClass->GetPathName() : FString());
+    }
 
     if (UUserDefinedStruct* Struct = Cast<UUserDefinedStruct>(Object))
     {
@@ -560,6 +574,18 @@ bool FABTAssetTools::PlaceActor(const TSharedPtr<FJsonObject>& Request, TSharedP
 
     Actor->Modify();
     const FString Label = ABTJson::GetString(Request, TEXT("label"));
+    if (!Label.IsEmpty() && ABTJson::GetBool(Request, TEXT("replaceExistingLabel"), false))
+    {
+        for (TActorIterator<AActor> It(World); It; ++It)
+        {
+            AActor* ExistingActor = *It;
+            if (ExistingActor && ExistingActor->GetActorLabel() == Label)
+            {
+                ExistingActor->Destroy();
+            }
+        }
+    }
+
     if (!Label.IsEmpty())
     {
         Actor->SetActorLabel(Label);
@@ -572,8 +598,10 @@ bool FABTAssetTools::PlaceActor(const TSharedPtr<FJsonObject>& Request, TSharedP
 
     OutJson = ABTJson::Ok();
     OutJson->SetStringField(TEXT("actor_name"), Actor->GetName());
+    OutJson->SetStringField(TEXT("actor_path"), Actor->GetPathName());
     OutJson->SetStringField(TEXT("actor_label"), Actor->GetActorLabel());
     OutJson->SetStringField(TEXT("class"), Actor->GetClass()->GetPathName());
     OutJson->SetStringField(TEXT("level"), Actor->GetLevel() ? Actor->GetLevel()->GetPathName() : FString());
+    OutJson->SetBoolField(TEXT("transient"), Actor->HasAnyFlags(RF_Transient));
     return true;
 }

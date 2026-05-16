@@ -5,11 +5,15 @@
 #include "MaterialEditingLibrary.h"
 #include "MaterialDomain.h"
 #include "Materials/MaterialExpressionConstant2Vector.h"
+#include "Materials/MaterialExpressionConstantBiasScale.h"
+#include "Materials/MaterialExpressionConstant3Vector.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionSphereMask.h"
+#include "Materials/MaterialExpressionSine.h"
+#include "Materials/MaterialExpressionTime.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialInstance.h"
@@ -196,6 +200,71 @@ namespace
         OutMessages.Add(TEXT("Configured material as translucent UI circle"));
         return true;
     }
+
+    bool BuildFlashSurfaceMaterial(UMaterial* Material, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError)
+    {
+        if (!Material)
+        {
+            OutError = TEXT("make_flash_surface requires a UMaterial or a material instance with a UMaterial parent");
+            return false;
+        }
+
+        Material->Modify();
+        UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+
+        Material->MaterialDomain = MD_Surface;
+        Material->BlendMode = BLEND_Opaque;
+        Material->SetShadingModel(MSM_Unlit);
+        Material->TwoSided = true;
+
+        UMaterialExpressionTime* Time = CreateExpression<UMaterialExpressionTime>(Material, -980, 0);
+        UMaterialExpressionSine* Sine = CreateExpression<UMaterialExpressionSine>(Material, -760, 0);
+        UMaterialExpressionConstantBiasScale* Pulse = CreateExpression<UMaterialExpressionConstantBiasScale>(Material, -540, 0);
+        UMaterialExpressionVectorParameter* Color = CreateExpression<UMaterialExpressionVectorParameter>(Material, -540, -180);
+        UMaterialExpressionMultiply* ColorTimesPulse = CreateExpression<UMaterialExpressionMultiply>(Material, -280, -80);
+        UMaterialExpressionMultiply* EmissiveBoost = CreateExpression<UMaterialExpressionMultiply>(Material, -60, -80);
+        UMaterialExpressionConstant3Vector* BaseColor = CreateExpression<UMaterialExpressionConstant3Vector>(Material, -280, 130);
+
+        if (!Time || !Sine || !Pulse || !Color || !ColorTimesPulse || !EmissiveBoost || !BaseColor)
+        {
+            OutError = TEXT("Failed to create one or more flash material expressions");
+            return false;
+        }
+
+        Time->bIgnorePause = true;
+        Sine->Period = static_cast<float>(ABTJson::GetNumber(Op, TEXT("period"), 1.0));
+        Pulse->Bias = 1.0f;
+        Pulse->Scale = 0.5f;
+        Color->ParameterName = *ABTJson::GetString(Op, TEXT("colorParameter"), TEXT("FlashColor"));
+        Color->DefaultValue = ReadLinearColor(Op, FLinearColor(0.2f, 0.65f, 1.0f, 1.0f));
+        BaseColor->Constant = Color->DefaultValue;
+
+        ColorTimesPulse->B.Connect(0, Pulse);
+        ColorTimesPulse->A.Connect(0, Color);
+        EmissiveBoost->A.Connect(0, ColorTimesPulse);
+        EmissiveBoost->ConstB = static_cast<float>(ABTJson::GetNumber(Op, TEXT("intensity"), 8.0));
+        Sine->Input.Connect(0, Time);
+        Pulse->Input.Connect(0, Sine);
+
+        if (!UMaterialEditingLibrary::ConnectMaterialProperty(BaseColor, TEXT(""), MP_BaseColor))
+        {
+            OutError = TEXT("Failed to connect flash material BaseColor");
+            return false;
+        }
+
+        if (!UMaterialEditingLibrary::ConnectMaterialProperty(EmissiveBoost, TEXT(""), MP_EmissiveColor))
+        {
+            OutError = TEXT("Failed to connect flash material EmissiveColor");
+            return false;
+        }
+
+        Material->PreEditChange(nullptr);
+        Material->PostEditChange();
+        UMaterialEditingLibrary::RecompileMaterial(Material);
+
+        OutMessages.Add(TEXT("Configured material as flashing unlit surface"));
+        return true;
+    }
 }
 
 bool FABTMaterialTools::ReadMaterial(const FString& AssetPath, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -321,6 +390,28 @@ bool FABTMaterialTools::PatchMaterial(const TSharedPtr<FJsonObject>& Patch, bool
                     MIC,
                     *ABTJson::GetString(Op, TEXT("colorParameter"), TEXT("CircleColor")),
                     ReadLinearColor(Op, FLinearColor::White));
+            }
+        }
+        else if (OpName == TEXT("make_flash_surface"))
+        {
+            UMaterial* FlashMaterial = Material;
+            if (!FlashMaterial && MIC)
+            {
+                FlashMaterial = Cast<UMaterial>(MIC->Parent);
+            }
+
+            if (!BuildFlashSurfaceMaterial(FlashMaterial, Op, Messages, OutError))
+            {
+                return false;
+            }
+
+            if (MIC)
+            {
+                MIC->Modify();
+                UMaterialEditingLibrary::SetMaterialInstanceVectorParameterValue(
+                    MIC,
+                    *ABTJson::GetString(Op, TEXT("colorParameter"), TEXT("FlashColor")),
+                    ReadLinearColor(Op, FLinearColor(0.2f, 0.65f, 1.0f, 1.0f)));
             }
         }
         else if (OpName == TEXT("add_expression"))

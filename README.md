@@ -2,7 +2,7 @@
 
 这是一个 **MCP + UE5 C++ Editor Plugin** 的完整参考骨架，用来让 Codex / LLM agent 读取、分析、修改 UE5 Blueprint、Material 和基础资产。
 
-它的目标不是让模型直接编辑 `.uasset`，这种行为约等于让章鱼操作核反应堆。正确工作流是：
+它的目标不是让模型直接编辑 `.uasset`。正确工作流是：
 
 ```text
 Codex / Agent
@@ -29,7 +29,7 @@ docs/                                架构、DSL、API、排错文档
 - 这是源码参考实现，不是预编译插件。
 - 没有直接写 `.uasset`。所有写入通过 UE Editor API。
 - Blueprint 写入能力刻意收敛在最小闭环：变量、函数、事件、Branch、Get/Set Variable、CallFunction、pin 连接、默认值、compile。
-- 不同 UE5 小版本的 Editor API 可能有轻微差异，第一次编译可能需要小修。是的，Unreal 版本 API 稳定性像一只喝了咖啡的松鼠。
+- 不同 UE5 小版本的 Editor API 可能有轻微差异，第一次编译可能需要按实际 API 做小修。
 
 ## 快速安装
 
@@ -108,33 +108,13 @@ codex mcp add ue5_agent_blueprint_tools -- node mcp-server/server.js
 ```yaml
 target: /Game/Blueprints/BP_Door
 operations:
-  - op: ensure_variable
-    name: IsOpen
-    type: bool
-    default: false
-
-  - op: ensure_function
-    name: Interact
-
-  - op: add_node
-    graph: Interact
-    id: get_is_open
-    type: GetVariable
-    variable: IsOpen
-
-  - op: add_node
-    graph: Interact
-    id: branch
-    type: Branch
-
-  - op: connect_exec
-    from: Entry.Then
-    to: branch.Execute
-
-  - op: connect_data
-    from: get_is_open.IsOpen
-    to: branch.Condition
+  - op: ensure_looping_move
+    function: MoveByDelta
+    interval: 0.25
+    delta: [25, 0, 0]
 ```
+
+`ensure_looping_move` 会创建精简函数并在 `BeginPlay` 中用 Timer 循环调用，避免让 agent 手写多节点连接，也避免默认依赖 Tick。
 
 ## 调试
 
@@ -166,8 +146,13 @@ npm run inspect
 - `read_material`
 - `patch_material`
 - `create_asset`
+- `read_asset`
 - `set_asset_property`
 - `save_asset`
+- `delete_asset`
+- `place_actor`
+
+`read_blueprint` 默认返回 compact summary。只有需要检查节点和 pin 时，才使用 `mode: "full"`。
 
 ## 生产建议
 

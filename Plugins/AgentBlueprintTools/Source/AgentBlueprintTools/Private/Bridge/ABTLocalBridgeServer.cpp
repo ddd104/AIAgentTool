@@ -212,7 +212,10 @@ void FABTLocalBridgeServer::BindRoutes()
         {
             return HandleJsonRoute(TEXT("/v1/blueprint/read"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
             {
-                return FABTBlueprintTools::ExportBlueprint(ABTJson::GetString(Body, TEXT("assetPath")), OutJson, OutError);
+                FABTBlueprintExportOptions Options;
+                Options.bIncludeGraphs = !ABTJson::GetBool(Body, TEXT("summaryOnly"), false);
+                Options.bIncludePins = ABTJson::GetBool(Body, TEXT("includePins"), true);
+                return FABTBlueprintTools::ExportBlueprint(ABTJson::GetString(Body, TEXT("assetPath")), OutJson, OutError, Options);
             });
         })));
 

@@ -67,10 +67,17 @@ server.registerTool(
 server.registerTool(
   "read_blueprint",
   {
-    description: "Export a Blueprint asset as JSON IR: variables, components, graphs, nodes, pins, links, and semantic summary.",
-    inputSchema: z.object({ assetPath: z.string().describe("UE asset path, e.g. /Game/Blueprints/BP_Door") })
+    description: "Read a Blueprint. Defaults to a compact semantic summary to reduce tokens; use mode=full only when node/pin detail is needed.",
+    inputSchema: z.object({
+      assetPath: z.string().describe("UE asset path, e.g. /Game/Blueprints/BP_Door"),
+      mode: z.enum(["summary", "graph", "full"]).optional().default("summary")
+    })
   },
-  async ({ assetPath }) => textResult(await callBridge("/v1/blueprint/read", { assetPath }))
+  async ({ assetPath, mode }) => textResult(await callBridge("/v1/blueprint/read", {
+    assetPath,
+    summaryOnly: mode === "summary",
+    includePins: mode === "full"
+  }))
 );
 
 server.registerTool(
@@ -142,7 +149,7 @@ server.registerTool(
 server.registerTool(
   "patch_material",
   {
-    description: "Apply a Material Patch DSL document for expressions, material properties, and material instance parameters.",
+    description: "Apply a Material Patch DSL document for expressions, material properties, material instance parameters, and templates like make_flash_surface.",
     inputSchema: z.object({
       patch: z.union([z.string(), z.record(z.any())]),
       saveOnSuccess: z.boolean().optional().default(false)
@@ -157,9 +164,9 @@ server.registerTool(
 server.registerTool(
   "create_asset",
   {
-    description: "Create a supported asset: Blueprint, Material, or MaterialInstanceConstant.",
+    description: "Create a supported asset: Blueprint, BlueprintInterface, Material, MaterialInstanceConstant, or UserDefinedStruct.",
     inputSchema: z.object({
-      assetType: z.enum(["Blueprint", "Material", "MaterialInstanceConstant", "UserDefinedStruct"]),
+      assetType: z.enum(["Blueprint", "BlueprintInterface", "Material", "MaterialInstanceConstant", "UserDefinedStruct"]),
       path: z.string(),
       parentClass: z.string().optional(),
       parentMaterial: z.string().optional(),
@@ -230,6 +237,7 @@ server.registerTool(
       location: z.array(z.number()).length(3).optional(),
       rotation: z.array(z.number()).length(3).optional(),
       transient: z.boolean().optional().default(false),
+      replaceExistingLabel: z.boolean().optional().default(false),
       saveLevel: z.boolean().optional().default(false)
     })
   },

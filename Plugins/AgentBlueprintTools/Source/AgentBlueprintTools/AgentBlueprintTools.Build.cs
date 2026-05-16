@@ -20,7 +20,7 @@ public class AgentBlueprintTools : ModuleRules
             "BlueprintGraph",
             "EditorScriptingUtilities",
             "HTTP",
-            "HttpServer",
+            "HTTPServer",
             "InputCore",
             "Json",
             "JsonUtilities",

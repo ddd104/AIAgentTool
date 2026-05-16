@@ -7,6 +7,12 @@
   "Category": "Editor",
   "CanContainContent": false,
   "EnabledByDefault": true,
+  "Plugins": [
+    {
+      "Name": "EditorScriptingUtilities",
+      "Enabled": true
+    }
+  ],
   "Modules": [
     {
       "Name": "AgentBlueprintTools",

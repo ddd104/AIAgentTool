@@ -49,7 +49,7 @@
 - `generated/`
 
 # 引擎路径
-Unreal_Root = E:\EPIC\UnrealEngine-5.6.0-release
+Unreal_Root = F:\EPIC\Engine\Windows
 
 # 架构设计
 阅读 ArchitectureDesign.md

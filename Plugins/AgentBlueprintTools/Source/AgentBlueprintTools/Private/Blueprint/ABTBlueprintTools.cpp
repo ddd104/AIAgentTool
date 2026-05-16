@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "Components/MeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "EditorAssetLibrary.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
@@ -23,6 +24,7 @@
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/ScopedSlowTask.h"
 #include "ScopedTransaction.h"
@@ -34,6 +36,8 @@
 
 namespace
 {
+    const FName NAME_ReceiveBeginPlay(TEXT("ReceiveBeginPlay"));
+
     FEdGraphPinType MakePinTypeFromString(const FString& TypeName)
     {
         FEdGraphPinType PinType;
@@ -246,6 +250,216 @@ namespace
         }
         return FVector((*Values)[0]->AsNumber(), (*Values)[1]->AsNumber(), (*Values)[2]->AsNumber());
     }
+
+    bool HasField(const TSharedPtr<FJsonObject>& Object, const FString& Field)
+    {
+        return Object.IsValid() && Object->HasField(Field);
+    }
+
+    void RequireField(const TSharedPtr<FJsonObject>& Op, const FString& OpName, const FString& Field, TArray<FString>& OutMessages)
+    {
+        if (!HasField(Op, Field) || ABTJson::GetString(Op, Field).IsEmpty())
+        {
+            OutMessages.Add(FString::Printf(TEXT("%s.%s is required."), *OpName, *Field));
+        }
+    }
+
+    void ValidateBlueprintOperation(const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages)
+    {
+        if (!Op.IsValid())
+        {
+            OutMessages.Add(TEXT("Each operation must be an object."));
+            return;
+        }
+
+        const FString OpName = ABTJson::GetString(Op, TEXT("op"));
+        if (OpName.IsEmpty())
+        {
+            OutMessages.Add(TEXT("operation.op is required."));
+            return;
+        }
+
+        if (OpName == TEXT("ensure_variable"))
+        {
+            RequireField(Op, OpName, TEXT("name"), OutMessages);
+            RequireField(Op, OpName, TEXT("type"), OutMessages);
+        }
+        else if (OpName == TEXT("ensure_function") || OpName == TEXT("ensure_move_function"))
+        {
+            RequireField(Op, OpName, TEXT("name"), OutMessages);
+        }
+        else if (OpName == TEXT("ensure_component"))
+        {
+            RequireField(Op, OpName, TEXT("name"), OutMessages);
+        }
+        else if (OpName == TEXT("set_static_mesh"))
+        {
+            RequireField(Op, OpName, TEXT("component"), OutMessages);
+            RequireField(Op, OpName, TEXT("mesh"), OutMessages);
+        }
+        else if (OpName == TEXT("set_component_material"))
+        {
+            RequireField(Op, OpName, TEXT("component"), OutMessages);
+            RequireField(Op, OpName, TEXT("material"), OutMessages);
+        }
+        else if (OpName == TEXT("add_node"))
+        {
+            RequireField(Op, OpName, TEXT("id"), OutMessages);
+            RequireField(Op, OpName, TEXT("type"), OutMessages);
+        }
+        else if (OpName == TEXT("connect_exec") || OpName == TEXT("connect_data"))
+        {
+            RequireField(Op, OpName, TEXT("from"), OutMessages);
+            RequireField(Op, OpName, TEXT("to"), OutMessages);
+        }
+        else if (OpName == TEXT("set_pin_default"))
+        {
+            RequireField(Op, OpName, TEXT("target"), OutMessages);
+        }
+        else if (OpName == TEXT("ensure_timer_loop"))
+        {
+            RequireField(Op, OpName, TEXT("function"), OutMessages);
+        }
+        else if (OpName == TEXT("ensure_looping_move"))
+        {
+            // function is optional here; the op defaults to MoveByDelta.
+        }
+        else
+        {
+            OutMessages.Add(FString::Printf(TEXT("Unsupported op: %s."), *OpName));
+        }
+    }
+
+    UK2Node_Event* FindBeginPlayEvent(UEdGraph* Graph)
+    {
+        if (!Graph) return nullptr;
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            UK2Node_Event* Event = Cast<UK2Node_Event>(Node);
+            if (Event && Event->bOverrideFunction &&
+                Event->EventReference.GetMemberName() == NAME_ReceiveBeginPlay)
+            {
+                return Event;
+            }
+        }
+        return nullptr;
+    }
+
+    UK2Node_Event* EnsureBeginPlayEvent(UBlueprint* Blueprint, UEdGraph* Graph, TArray<FString>& OutMessages)
+    {
+        if (UK2Node_Event* Existing = FindBeginPlayEvent(Graph))
+        {
+            return Existing;
+        }
+
+        UK2Node_Event* Event = NewObject<UK2Node_Event>(Graph);
+        Event->EventReference.SetExternalMember(NAME_ReceiveBeginPlay, AActor::StaticClass());
+        Event->bOverrideFunction = true;
+        Graph->AddNode(Event, true, false);
+        Event->CreateNewGuid();
+        Event->NodePosX = -420;
+        Event->NodePosY = 0;
+        Event->AllocateDefaultPins();
+        OutMessages.Add(TEXT("Added ReceiveBeginPlay event"));
+        return Event;
+    }
+
+    UEdGraphPin* FindFunctionParamPin(UK2Node_CallFunction* Node, UFunction* Function, const FName& ParamName)
+    {
+        if (!Node || !Function || !Function->FindPropertyByName(ParamName))
+        {
+            return nullptr;
+        }
+        return FindPinByName(Node, ParamName.ToString());
+    }
+
+    bool HasTimerCallForFunction(UEdGraph* Graph, const FString& FunctionName)
+    {
+        if (!Graph) return false;
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            UK2Node_CallFunction* Call = Cast<UK2Node_CallFunction>(Node);
+            if (!Call || Call->FunctionReference.GetMemberName() != GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_SetTimer))
+            {
+                continue;
+            }
+            UEdGraphPin* FunctionNamePin = FindPinByName(Call, TEXT("FunctionName"));
+            if (FunctionNamePin && FunctionNamePin->DefaultValue.Equals(FunctionName, ESearchCase::IgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool EnsureTimerLoop(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError)
+    {
+        UEdGraph* Graph = Blueprint && Blueprint->UbergraphPages.Num() ? Blueprint->UbergraphPages[0].Get() : nullptr;
+        if (!Graph)
+        {
+            OutError = TEXT("Blueprint has no EventGraph");
+            return false;
+        }
+
+        const FString FunctionName = ABTJson::GetString(Op, TEXT("function"), TEXT("MoveByDelta"));
+        if (HasTimerCallForFunction(Graph, FunctionName))
+        {
+            OutMessages.Add(FString::Printf(TEXT("Timer loop already exists for %s"), *FunctionName));
+            return true;
+        }
+
+        UFunction* TimerFunction = UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, K2_SetTimer));
+        if (!TimerFunction)
+        {
+            OutError = TEXT("UKismetSystemLibrary::K2_SetTimer not found");
+            return false;
+        }
+
+        UK2Node_Event* BeginPlay = EnsureBeginPlayEvent(Blueprint, Graph, OutMessages);
+        UK2Node_CallFunction* TimerNode = NewObject<UK2Node_CallFunction>(Graph);
+        TimerNode->SetFromFunction(TimerFunction);
+        Graph->AddNode(TimerNode, true, false);
+        TimerNode->CreateNewGuid();
+        TimerNode->NodePosX = 60;
+        TimerNode->NodePosY = 0;
+        TimerNode->AllocateDefaultPins();
+
+        UEdGraphPin* FunctionNamePin = FindFunctionParamPin(TimerNode, TimerFunction, TEXT("FunctionName"));
+        UEdGraphPin* TimePin = FindFunctionParamPin(TimerNode, TimerFunction, TEXT("Time"));
+        UEdGraphPin* LoopingPin = FindFunctionParamPin(TimerNode, TimerFunction, TEXT("bLooping"));
+        if (!FunctionNamePin || !TimePin || !LoopingPin)
+        {
+            OutError = TEXT("K2_SetTimer pins did not match reflected function parameters");
+            return false;
+        }
+
+        FunctionNamePin->DefaultValue = FunctionName;
+        TimePin->DefaultValue = FString::SanitizeFloat(ABTJson::GetNumber(Op, TEXT("interval"), 0.25));
+        LoopingPin->DefaultValue = ABTJson::GetBool(Op, TEXT("looping"), true) ? TEXT("true") : TEXT("false");
+
+        if (UEdGraphPin* MaxOncePin = FindFunctionParamPin(TimerNode, TimerFunction, TEXT("bMaxOncePerFrame")))
+        {
+            MaxOncePin->DefaultValue = ABTJson::GetBool(Op, TEXT("maxOncePerFrame"), true) ? TEXT("true") : TEXT("false");
+        }
+
+        UEdGraphPin* BeginThen = FindFirstPin(BeginPlay, EGPD_Output, UEdGraphSchema_K2::PC_Exec);
+        UEdGraphPin* TimerExec = FindFirstPin(TimerNode, EGPD_Input, UEdGraphSchema_K2::PC_Exec);
+        if (!BeginThen || !TimerExec)
+        {
+            OutError = TEXT("Could not find exec pins for timer loop");
+            return false;
+        }
+
+        const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+        if (!Schema->TryCreateConnection(BeginThen, TimerExec))
+        {
+            OutError = TEXT("Could not connect BeginPlay to timer loop");
+            return false;
+        }
+
+        OutMessages.Add(FString::Printf(TEXT("Ensured timer loop for %s"), *FunctionName));
+        return true;
+    }
 }
 
 UBlueprint* FABTBlueprintTools::LoadBlueprint(const FString& AssetPath, FString& OutError)
@@ -326,7 +540,7 @@ TSharedPtr<FJsonObject> FABTBlueprintTools::ExportPin(UEdGraphPin* Pin)
     return Json;
 }
 
-TSharedPtr<FJsonObject> FABTBlueprintTools::ExportNode(UEdGraphNode* Node)
+TSharedPtr<FJsonObject> FABTBlueprintTools::ExportNode(UEdGraphNode* Node, bool bIncludePins)
 {
     TSharedPtr<FJsonObject> Json = ABTJson::Object();
     if (!Node) return Json;
@@ -376,16 +590,20 @@ TSharedPtr<FJsonObject> FABTBlueprintTools::ExportNode(UEdGraphNode* Node)
         Json->SetStringField(TEXT("kind"), TEXT("Node"));
     }
 
-    TArray<TSharedPtr<FJsonValue>> Pins;
-    for (UEdGraphPin* Pin : Node->Pins)
+    Json->SetNumberField(TEXT("pin_count"), Node->Pins.Num());
+    if (bIncludePins)
     {
-        Pins.Add(ABTJson::ObjectValue(ExportPin(Pin)));
+        TArray<TSharedPtr<FJsonValue>> Pins;
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            Pins.Add(ABTJson::ObjectValue(ExportPin(Pin)));
+        }
+        Json->SetArrayField(TEXT("pins"), Pins);
     }
-    Json->SetArrayField(TEXT("pins"), Pins);
     return Json;
 }
 
-TSharedPtr<FJsonObject> FABTBlueprintTools::ExportGraph(UEdGraph* Graph)
+TSharedPtr<FJsonObject> FABTBlueprintTools::ExportGraph(UEdGraph* Graph, bool bIncludePins)
 {
     TSharedPtr<FJsonObject> Json = ABTJson::Object();
     if (!Graph) return Json;
@@ -396,13 +614,13 @@ TSharedPtr<FJsonObject> FABTBlueprintTools::ExportGraph(UEdGraph* Graph)
     TArray<TSharedPtr<FJsonValue>> Nodes;
     for (UEdGraphNode* Node : Graph->Nodes)
     {
-        Nodes.Add(ABTJson::ObjectValue(ExportNode(Node)));
+        Nodes.Add(ABTJson::ObjectValue(ExportNode(Node, bIncludePins)));
     }
     Json->SetArrayField(TEXT("nodes"), Nodes);
     return Json;
 }
 
-bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
+bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJsonObject>& OutJson, FString& OutError, const FABTBlueprintExportOptions& Options)
 {
     UBlueprint* Blueprint = LoadBlueprint(AssetPath, OutError);
     if (!Blueprint) return false;
@@ -452,23 +670,22 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
     }
     OutJson->SetArrayField(TEXT("components"), Components);
 
-    TArray<UEdGraph*> GraphsRaw;
-    Blueprint->GetAllGraphs(GraphsRaw);
-    TArray<TSharedPtr<FJsonValue>> Graphs;
-    for (UEdGraph* Graph : GraphsRaw)
-    {
-        Graphs.Add(ABTJson::ObjectValue(ExportGraph(Graph)));
-    }
-    OutJson->SetArrayField(TEXT("graphs"), Graphs);
-
     TSharedPtr<FJsonObject> Summary = ABTJson::Object();
     TArray<TSharedPtr<FJsonValue>> EntryPoints;
     TArray<TSharedPtr<FJsonValue>> Reads;
     TArray<TSharedPtr<FJsonValue>> Writes;
     TArray<TSharedPtr<FJsonValue>> Calls;
+    TArray<TSharedPtr<FJsonValue>> GraphSummaries;
+    TArray<UEdGraph*> GraphsRaw;
+    Blueprint->GetAllGraphs(GraphsRaw);
     for (UEdGraph* Graph : GraphsRaw)
     {
         if (!Graph) continue;
+        TSharedPtr<FJsonObject> GraphSummary = ABTJson::Object();
+        GraphSummary->SetStringField(TEXT("name"), Graph->GetName());
+        GraphSummary->SetNumberField(TEXT("node_count"), Graph->Nodes.Num());
+        GraphSummaries.Add(ABTJson::ObjectValue(GraphSummary));
+
         for (UEdGraphNode* Node : Graph->Nodes)
         {
             if (UK2Node_Event* Event = Cast<UK2Node_Event>(Node)) EntryPoints.Add(ABTJson::StringValue(Event->EventReference.GetMemberName().ToString()));
@@ -482,7 +699,19 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
     Summary->SetArrayField(TEXT("variable_reads"), Reads);
     Summary->SetArrayField(TEXT("variable_writes"), Writes);
     Summary->SetArrayField(TEXT("external_calls"), Calls);
+    Summary->SetNumberField(TEXT("graph_count"), GraphsRaw.Num());
     OutJson->SetObjectField(TEXT("semantic_summary"), Summary);
+    OutJson->SetArrayField(TEXT("graph_summaries"), GraphSummaries);
+
+    if (Options.bIncludeGraphs)
+    {
+        TArray<TSharedPtr<FJsonValue>> Graphs;
+        for (UEdGraph* Graph : GraphsRaw)
+        {
+            Graphs.Add(ABTJson::ObjectValue(ExportGraph(Graph, Options.bIncludePins)));
+        }
+        OutJson->SetArrayField(TEXT("graphs"), Graphs);
+    }
     return true;
 }
 
@@ -501,7 +730,7 @@ bool FABTBlueprintTools::AnalyzeBlueprintGraph(const FString& AssetPath, const F
     OutJson = ABTJson::Ok();
     OutJson->SetStringField(TEXT("asset_path"), AssetPath);
     OutJson->SetStringField(TEXT("graph"), Graph->GetName());
-    OutJson->SetObjectField(TEXT("graph_ir"), ExportGraph(Graph));
+    OutJson->SetObjectField(TEXT("graph_ir"), ExportGraph(Graph, true));
     return true;
 }
 
@@ -556,6 +785,13 @@ bool FABTBlueprintTools::ValidatePatch(const TSharedPtr<FJsonObject>& Patch, TAr
     if (!Patch->TryGetArrayField(TEXT("operations"), Ops) || !Ops)
     {
         OutMessages.Add(TEXT("Patch.operations array is required."));
+    }
+    else
+    {
+        for (const TSharedPtr<FJsonValue>& Value : *Ops)
+        {
+            ValidateBlueprintOperation(Value->AsObject(), OutMessages);
+        }
     }
 
     return OutMessages.Num() == 0;
@@ -686,6 +922,38 @@ bool FABTBlueprintTools::ApplyOperation(UBlueprint* Blueprint, const TSharedPtr<
 
         OutMessages.Add(FString::Printf(TEXT("Ensured move function %s"), *FunctionName));
         return true;
+    }
+
+    if (OpName == TEXT("ensure_timer_loop"))
+    {
+        return EnsureTimerLoop(Blueprint, Op, OutMessages, OutError);
+    }
+
+    if (OpName == TEXT("ensure_looping_move"))
+    {
+        const FString FunctionName = ABTJson::GetString(Op, TEXT("function"), TEXT("MoveByDelta"));
+        TSharedPtr<FJsonObject> MoveOp = ABTJson::Object();
+        MoveOp->SetStringField(TEXT("op"), TEXT("ensure_move_function"));
+        MoveOp->SetStringField(TEXT("name"), FunctionName);
+
+        const TArray<TSharedPtr<FJsonValue>>* Delta = nullptr;
+        if (Op->TryGetArrayField(TEXT("delta"), Delta) && Delta)
+        {
+            MoveOp->SetArrayField(TEXT("delta"), *Delta);
+        }
+
+        if (!ApplyOperation(Blueprint, MoveOp, NodeMap, OutMessages, OutError))
+        {
+            return false;
+        }
+
+        TSharedPtr<FJsonObject> TimerOp = ABTJson::Object();
+        TimerOp->SetStringField(TEXT("op"), TEXT("ensure_timer_loop"));
+        TimerOp->SetStringField(TEXT("function"), FunctionName);
+        TimerOp->SetNumberField(TEXT("interval"), ABTJson::GetNumber(Op, TEXT("interval"), 0.25));
+        TimerOp->SetBoolField(TEXT("looping"), ABTJson::GetBool(Op, TEXT("looping"), true));
+        TimerOp->SetBoolField(TEXT("maxOncePerFrame"), ABTJson::GetBool(Op, TEXT("maxOncePerFrame"), true));
+        return EnsureTimerLoop(Blueprint, TimerOp, OutMessages, OutError);
     }
 
     if (OpName == TEXT("ensure_component"))
@@ -952,6 +1220,12 @@ bool FABTBlueprintTools::ApplyPatch(const TSharedPtr<FJsonObject>& Patch, bool b
     {
         OutJson = ABTJson::Ok();
         OutJson->SetBoolField(TEXT("valid"), false);
+        TArray<TSharedPtr<FJsonValue>> JsonMessages;
+        for (const FString& Message : ValidationMessages)
+        {
+            JsonMessages.Add(ABTJson::StringValue(Message));
+        }
+        OutJson->SetArrayField(TEXT("messages"), JsonMessages);
         return true;
     }
 
@@ -961,7 +1235,7 @@ bool FABTBlueprintTools::ApplyPatch(const TSharedPtr<FJsonObject>& Patch, bool b
     const TArray<TSharedPtr<FJsonValue>>* Ops = nullptr;
     Patch->TryGetArrayField(TEXT("operations"), Ops);
 
-    const FScopedTransaction Transaction(NSLOCTEXT("AgentBlueprintTools", "ApplyBlueprintPatch", "Apply Blueprint Patch"));
+    FScopedTransaction Transaction(NSLOCTEXT("AgentBlueprintTools", "ApplyBlueprintPatch", "Apply Blueprint Patch"));
     Blueprint->Modify();
 
     TArray<FString> Messages;
@@ -973,10 +1247,12 @@ bool FABTBlueprintTools::ApplyPatch(const TSharedPtr<FJsonObject>& Patch, bool b
         if (!Op.IsValid())
         {
             OutError = TEXT("operation is not an object");
+            Transaction.Cancel();
             return false;
         }
         if (!ApplyOperation(Blueprint, Op, NodeMap, Messages, OutError))
         {
+            Transaction.Cancel();
             return false;
         }
     }
@@ -984,7 +1260,11 @@ bool FABTBlueprintTools::ApplyPatch(const TSharedPtr<FJsonObject>& Patch, bool b
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
     TSharedPtr<FJsonObject> CompileJson;
-    if (!CompileBlueprint(Blueprint, CompileJson, OutError)) return false;
+    if (!CompileBlueprint(Blueprint, CompileJson, OutError))
+    {
+        Transaction.Cancel();
+        return false;
+    }
 
     OutJson = ABTJson::Ok();
     OutJson->SetObjectField(TEXT("compile"), CompileJson);
@@ -996,6 +1276,7 @@ bool FABTBlueprintTools::ApplyPatch(const TSharedPtr<FJsonObject>& Patch, bool b
 
     if (!CompileJson->GetBoolField(TEXT("compile_ok")))
     {
+        Transaction.Cancel();
         OutJson->SetBoolField(TEXT("rolledBack"), true);
         return true;
     }
@@ -1004,7 +1285,7 @@ bool FABTBlueprintTools::ApplyPatch(const TSharedPtr<FJsonObject>& Patch, bool b
     {
         UPackage* Package = Blueprint->GetOutermost();
         if (Package) Package->SetDirtyFlag(true);
-        OutJson->SetBoolField(TEXT("saved"), true);
+        OutJson->SetBoolField(TEXT("saved"), UEditorAssetLibrary::SaveLoadedAsset(Blueprint, false));
     }
 
     return true;
