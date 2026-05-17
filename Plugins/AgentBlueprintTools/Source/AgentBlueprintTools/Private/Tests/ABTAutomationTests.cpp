@@ -76,6 +76,80 @@ namespace
         return false;
     }
 
+    bool JsonArrayObjectNumberAtLeast(
+        const TSharedPtr<FJsonObject>& Json,
+        const FString& ArrayName,
+        const FString& MatchField,
+        const FString& MatchValue,
+        const FString& NumberField,
+        double Minimum)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+        if (!Json.IsValid() || !Json->TryGetArrayField(ArrayName, Values) || !Values)
+        {
+            return false;
+        }
+
+        for (const TSharedPtr<FJsonValue>& Value : *Values)
+        {
+            const TSharedPtr<FJsonObject> Object = Value->AsObject();
+            FString Actual;
+            double NumberValue = 0.0;
+            if (Object.IsValid() &&
+                Object->TryGetStringField(MatchField, Actual) &&
+                Actual == MatchValue &&
+                Object->TryGetNumberField(NumberField, NumberValue))
+            {
+                return NumberValue >= Minimum;
+            }
+        }
+        return false;
+    }
+
+    bool JsonArrayObjectContainsNestedString(
+        const TSharedPtr<FJsonObject>& Json,
+        const FString& ArrayName,
+        const FString& MatchField,
+        const FString& MatchValue,
+        const FString& NestedArrayName,
+        const FString& NestedField,
+        const FString& Expected)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+        if (!Json.IsValid() || !Json->TryGetArrayField(ArrayName, Values) || !Values)
+        {
+            return false;
+        }
+
+        for (const TSharedPtr<FJsonValue>& Value : *Values)
+        {
+            const TSharedPtr<FJsonObject> Object = Value->AsObject();
+            FString Actual;
+            if (!Object.IsValid() || !Object->TryGetStringField(MatchField, Actual) || Actual != MatchValue)
+            {
+                continue;
+            }
+
+            const TArray<TSharedPtr<FJsonValue>>* NestedValues = nullptr;
+            if (!Object->TryGetArrayField(NestedArrayName, NestedValues) || !NestedValues)
+            {
+                return false;
+            }
+
+            for (const TSharedPtr<FJsonValue>& NestedValue : *NestedValues)
+            {
+                const TSharedPtr<FJsonObject> NestedObject = NestedValue->AsObject();
+                FString NestedActual;
+                if (NestedObject.IsValid() && NestedObject->TryGetStringField(NestedField, NestedActual) && NestedActual == Expected)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return false;
+    }
+
     bool JsonObjectArrayContainsString(
         const TSharedPtr<FJsonObject>& Json,
         const FString& ObjectName,
@@ -230,7 +304,7 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Struct includes Speed field"), JsonArrayContainsObjectString(Json, TEXT("fields"), TEXT("name"), TEXT("Speed")));
 
     TSharedPtr<FJsonObject> WidgetRequest = MakeCreateAssetRequest(TEXT("WidgetBlueprint"), TestWidgetPath);
-    WidgetRequest->SetStringField(TEXT("parentClass"), TEXT("/Script/UMG.UserWidget"));
+    WidgetRequest->SetStringField(TEXT("parentClass"), TEXT("/Script/AIAgentTool.ABTButtonPagesWidget"));
     TestTrue(TEXT("Create Widget Blueprint asset"), FABTAssetTools::CreateAsset(WidgetRequest, Json, Error));
     const FString WidgetPath = ABTJson::GetString(Json, TEXT("asset_path"));
 
@@ -257,6 +331,9 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Read Widget Blueprint IR"), FABTBlueprintTools::ExportBlueprint(WidgetPath, Json, Error));
     TestTrue(TEXT("Widget has first page button"), JsonArrayContainsObjectString(Json, TEXT("widgets"), TEXT("name"), TEXT("PageButton_0")));
     TestTrue(TEXT("Widget has first popup page"), JsonArrayContainsObjectString(Json, TEXT("widgets"), TEXT("name"), TEXT("PagePanel_0")));
+    TestTrue(TEXT("Widget has first popup animation"), JsonArrayContainsObjectString(Json, TEXT("animations"), TEXT("name"), TEXT("PagePopup_0")));
+    TestTrue(TEXT("Popup animation binds first page panel"), JsonArrayObjectContainsNestedString(Json, TEXT("animations"), TEXT("name"), TEXT("PagePopup_0"), TEXT("widget_bindings"), TEXT("widget_name"), TEXT("PagePanel_0")));
+    TestTrue(TEXT("Popup animation has midpoint event key"), JsonArrayObjectNumberAtLeast(Json, TEXT("animations"), TEXT("name"), TEXT("PagePopup_0"), TEXT("event_key_count"), 1.0));
 
     TestTrue(TEXT("Create Blueprint Interface asset"), FABTAssetTools::CreateAsset(MakeCreateAssetRequest(TEXT("BlueprintInterface"), TestInterfacePath), Json, Error));
     TSharedPtr<FJsonObject> ReadInterfaceRequest = ABTJson::Object();

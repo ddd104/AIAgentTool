@@ -2,11 +2,11 @@
 
 #include "ABTButtonPagesWidget.h"
 
+#include "Animation/WidgetAnimation.h"
 #include "Blueprint/WidgetTree.h"
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Components/Button.h"
 #include "Components/Widget.h"
-#include "Engine/World.h"
-#include "TimerManager.h"
 
 namespace
 {
@@ -21,6 +21,11 @@ namespace
 	{
 		return *FString::Printf(TEXT("PagePanel_%d"), Index);
 	}
+
+	FName PopupAnimationName(int32 Index)
+	{
+		return *FString::Printf(TEXT("PagePopup_%d"), Index);
+	}
 }
 
 void UABTButtonPagesWidget::NativeConstruct()
@@ -32,16 +37,6 @@ void UABTButtonPagesWidget::NativeConstruct()
 	{
 		BindButton(Index);
 	}
-}
-
-void UABTButtonPagesWidget::NativeDestruct()
-{
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(PopupTimerHandle);
-	}
-
-	Super::NativeDestruct();
 }
 
 void UABTButtonPagesWidget::CachePages()
@@ -92,6 +87,28 @@ void UABTButtonPagesWidget::BindButton(int32 Index)
 	}
 }
 
+UWidgetAnimation* UABTButtonPagesWidget::FindPopupAnimation(int32 PageIndex) const
+{
+	const FName TargetName = PopupAnimationName(PageIndex);
+	for (UClass* Class = GetClass(); Class; Class = Class->GetSuperClass())
+	{
+		const UWidgetBlueprintGeneratedClass* WidgetClass = Cast<UWidgetBlueprintGeneratedClass>(Class);
+		if (!WidgetClass)
+		{
+			continue;
+		}
+
+		for (UWidgetAnimation* Animation : WidgetClass->Animations)
+		{
+			if (Animation && Animation->GetFName() == TargetName)
+			{
+				return Animation;
+			}
+		}
+	}
+	return nullptr;
+}
+
 void UABTButtonPagesWidget::ShowPageByIndex(int32 PageIndex)
 {
 	if (!PageWidgets.IsValidIndex(PageIndex))
@@ -113,40 +130,30 @@ void UABTButtonPagesWidget::ShowPageByIndex(int32 PageIndex)
 		return;
 	}
 
+	ActivePageIndex = PageIndex;
 	ActivePage->SetRenderOpacity(InitialOpacity);
 	FWidgetTransform Transform = ActivePage->GetRenderTransform();
 	Transform.Scale = InitialScale;
 	ActivePage->SetRenderTransform(Transform);
 	ActivePage->SetVisibility(ESlateVisibility::Visible);
 
-	if (UWorld* World = GetWorld())
+	if (UWidgetAnimation* PopupAnimation = FindPopupAnimation(PageIndex))
 	{
-		PopupStartTime = World->GetTimeSeconds();
-		World->GetTimerManager().SetTimer(PopupTimerHandle, this, &UABTButtonPagesWidget::AdvancePopup, 1.0f / 60.0f, true);
+		const float PlaybackSpeed = PopupDuration > 0.0f ? 1.0f / PopupDuration : 1.0f;
+		PlayAnimation(PopupAnimation, 0.0f, 1, EUMGSequencePlayMode::Forward, PlaybackSpeed, false);
+	}
+	else
+	{
+		ActivePage->SetRenderOpacity(1.0f);
+		Transform.Scale = FVector2D(1.0f, 1.0f);
+		ActivePage->SetRenderTransform(Transform);
 	}
 }
 
-void UABTButtonPagesWidget::AdvancePopup()
+void UABTButtonPagesWidget::OnPopupAnimationMidpoint()
 {
-	UWorld* World = GetWorld();
-	if (!World || !ActivePage)
-	{
-		return;
-	}
-
-	const float Duration = FMath::Max(PopupDuration, 0.01f);
-	const float Alpha = FMath::Clamp(static_cast<float>((World->GetTimeSeconds() - PopupStartTime) / Duration), 0.0f, 1.0f);
-	const float Eased = FMath::InterpEaseOut(0.0f, 1.0f, Alpha, 2.0f);
-
-	ActivePage->SetRenderOpacity(FMath::Lerp(InitialOpacity, 1.0f, Eased));
-	FWidgetTransform Transform = ActivePage->GetRenderTransform();
-	Transform.Scale = FMath::Lerp(InitialScale, FVector2D(1.0f, 1.0f), Eased);
-	ActivePage->SetRenderTransform(Transform);
-
-	if (Alpha >= 1.0f)
-	{
-		World->GetTimerManager().ClearTimer(PopupTimerHandle);
-	}
+	LastMidpointPageIndex = ActivePageIndex;
+	OnPopupMidpoint.Broadcast(ActivePageIndex);
 }
 
 void UABTButtonPagesWidget::OnPageButton0Clicked() { ShowPageByIndex(0); }
