@@ -9,7 +9,7 @@
     "inspect": "npx @modelcontextprotocol/inspector node server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "js-yaml": "^4.1.0",
     "zod": "^4.0.0"
   },

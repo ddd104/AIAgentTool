@@ -7,8 +7,8 @@ sandbox_mode = "workspace-write"
 network_access = false
 
 [mcp_servers.ue5_agent_blueprint_tools]
-command = "node"
-args = ["mcp-server/server.js"]
+command = ".\\.runtime\\node\\node.exe"
+args = [".\\mcp-server\\server.js"]
 cwd = "."
 enabled = true
 startup_timeout_sec = 20

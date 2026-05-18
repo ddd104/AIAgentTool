@@ -1,5 +1,5 @@
-import { McpServer } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import yaml from "js-yaml";
 
