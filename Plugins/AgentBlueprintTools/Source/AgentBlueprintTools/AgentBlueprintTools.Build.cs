@@ -16,6 +16,7 @@ public class AgentBlueprintTools : ModuleRules
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "ApplicationCore",
+            "AssetRegistry",
             "AssetTools",
             "BlueprintGraph",
             "EditorScriptingUtilities",

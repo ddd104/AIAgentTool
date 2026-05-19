@@ -40,6 +40,7 @@ Use the `ue5_agent_blueprint_tools` MCP server. Never edit `.uasset` files direc
 - `set_static_mesh`
 - `set_component_material`
 - `configure_button_pages_widget`
+- `configure_figma_widget`
 - `add_node`
 - `set_pin_default`
 - `connect_exec`
@@ -53,11 +54,17 @@ Use the `ue5_agent_blueprint_tools` MCP server. Never edit `.uasset` files direc
 2. Use `patch_material` with a small material patch.
 3. Recompile material after edits.
 
+## Performance optimization flow
+
+Use `analyze_performance` first for Android, Windows, or Linux target checks. Use `dry_run_performance_optimization` before `apply_performance_optimization` so the generated plan can be inspected. Leave `saveAssets` false unless the user asks to save assets, and leave `applyVisualChanges` false unless the user accepts material changes that may alter appearance.
+
 ## Asset flow
 
-Use `create_asset`, `read_asset`, `set_asset_property`, `save_asset`, and `delete_asset` rather than raw file writes. Only delete known temporary assets or assets the user explicitly asked to remove.
+Use `create_asset`, `import_assets`, `read_asset`, `set_asset_property`, `save_asset`, and `delete_asset` rather than raw file writes. Only delete known temporary assets or assets the user explicitly asked to remove.
 
 Use `create_asset` with `assetType: WidgetBlueprint` for UMG widgets. For button-list popup page widgets, prefer `configure_button_pages_widget` over hand-building UMG widget trees and button graph logic.
+
+For Figma-derived UMG widgets, use `configure_figma_widget`. Preserve the Figma hierarchy in the nested `root.children` structure. Create reusable child Widget Blueprints first, compile them, then reference them in the main widget with `type: "UserWidget"` plus `widgetAsset`. Download Figma icon/image PNGs locally, import them with `import_assets`, and assign the resulting texture asset path with `brushPath`, `texturePath`, or `imagePath`.
 
 Use `place_actor` to place an Actor Blueprint or Actor class in the current editor level. Leave `saveLevel` false unless the user asks to save the level.
 

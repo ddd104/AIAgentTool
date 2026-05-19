@@ -2,6 +2,7 @@
 #include "Blueprint/ABTBlueprintTools.h"
 #include "Materials/ABTMaterialTools.h"
 #include "Assets/ABTAssetTools.h"
+#include "Performance/ABTPerformanceTools.h"
 #include "Utils/ABTGameThread.h"
 #include "Utils/ABTJson.h"
 #include "Containers/StringConv.h"
@@ -315,6 +316,36 @@ void FABTLocalBridgeServer::BindRoutes()
             });
         })));
 
+    RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/performance/analyze")), EHttpServerRequestVerbs::VERB_POST,
+        FHttpRequestHandler::CreateLambda(
+        [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+        {
+            return HandleJsonRoute(TEXT("/v1/performance/analyze"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
+            {
+                return FABTPerformanceTools::AnalyzeProject(Body, OutJson, OutError);
+            });
+        })));
+
+    RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/performance/optimization/dry-run")), EHttpServerRequestVerbs::VERB_POST,
+        FHttpRequestHandler::CreateLambda(
+        [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+        {
+            return HandleJsonRoute(TEXT("/v1/performance/optimization/dry-run"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
+            {
+                return FABTPerformanceTools::DryRunOptimization(Body, OutJson, OutError);
+            });
+        })));
+
+    RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/performance/optimization/apply")), EHttpServerRequestVerbs::VERB_POST,
+        FHttpRequestHandler::CreateLambda(
+        [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+        {
+            return HandleJsonRoute(TEXT("/v1/performance/optimization/apply"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
+            {
+                return FABTPerformanceTools::ApplyOptimization(Body, OutJson, OutError);
+            });
+        })));
+
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/asset/create")), EHttpServerRequestVerbs::VERB_POST,
         FHttpRequestHandler::CreateLambda(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
@@ -322,6 +353,16 @@ void FABTLocalBridgeServer::BindRoutes()
             return HandleJsonRoute(TEXT("/v1/asset/create"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
             {
                 return FABTAssetTools::CreateAsset(Body, OutJson, OutError);
+            });
+        })));
+
+    RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/asset/import")), EHttpServerRequestVerbs::VERB_POST,
+        FHttpRequestHandler::CreateLambda(
+        [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+        {
+            return HandleJsonRoute(TEXT("/v1/asset/import"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
+            {
+                return FABTAssetTools::ImportAssets(Body, OutJson, OutError);
             });
         })));
 

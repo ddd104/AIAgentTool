@@ -17,6 +17,7 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Factories/MaterialInstanceConstantFactoryNew.h"
+#include "Misc/Paths.h"
 #include "ScopedTransaction.h"
 #include "StructUtils/UserDefinedStruct.h"
 #include "Subsystems/EditorActorSubsystem.h"
@@ -387,6 +388,69 @@ bool FABTAssetTools::CreateAsset(const TSharedPtr<FJsonObject>& Request, TShared
     OutJson->SetStringField(TEXT("asset_path"), Created->GetPathName());
     OutJson->SetStringField(TEXT("class"), Created->GetClass()->GetPathName());
     OutJson->SetBoolField(TEXT("saved"), bSave);
+    return true;
+}
+
+bool FABTAssetTools::ImportAssets(const TSharedPtr<FJsonObject>& Request, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
+{
+    const FString DestinationPath = ABTJson::GetString(Request, TEXT("destinationPath"));
+    if (DestinationPath.IsEmpty() || !DestinationPath.StartsWith(TEXT("/Game/")))
+    {
+        OutError = TEXT("destinationPath must be a /Game path");
+        return false;
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* SourceFileValues = nullptr;
+    if (!Request->TryGetArrayField(TEXT("sourceFiles"), SourceFileValues) || !SourceFileValues || SourceFileValues->Num() == 0)
+    {
+        OutError = TEXT("sourceFiles array is required");
+        return false;
+    }
+
+    TArray<FString> SourceFiles;
+    for (const TSharedPtr<FJsonValue>& SourceFileValue : *SourceFileValues)
+    {
+        FString SourceFile = SourceFileValue->AsString();
+        FPaths::NormalizeFilename(SourceFile);
+        if (!FPaths::FileExists(SourceFile))
+        {
+            OutError = FString::Printf(TEXT("Source file does not exist: %s"), *SourceFile);
+            return false;
+        }
+        SourceFiles.Add(SourceFile);
+    }
+
+    UEditorAssetLibrary::MakeDirectory(DestinationPath);
+    IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+    TArray<UObject*> ImportedObjects = AssetTools.ImportAssets(SourceFiles, DestinationPath, nullptr, false, nullptr, false, false);
+
+    OutJson = ABTJson::Ok();
+    TArray<TSharedPtr<FJsonValue>> Assets;
+    const bool bSave = ABTJson::GetBool(Request, TEXT("save"), false);
+    for (UObject* ImportedObject : ImportedObjects)
+    {
+        if (!ImportedObject)
+        {
+            continue;
+        }
+
+        bool bSaved = false;
+        if (bSave)
+        {
+            bSaved = UEditorAssetLibrary::SaveLoadedAsset(ImportedObject, false);
+        }
+
+        TSharedPtr<FJsonObject> AssetJson = ABTJson::Object();
+        AssetJson->SetStringField(TEXT("asset_path"), ImportedObject->GetPathName());
+        AssetJson->SetStringField(TEXT("name"), ImportedObject->GetName());
+        AssetJson->SetStringField(TEXT("class"), ImportedObject->GetClass()->GetPathName());
+        AssetJson->SetBoolField(TEXT("saved"), bSaved);
+        Assets.Add(ABTJson::ObjectValue(AssetJson));
+    }
+
+    OutJson->SetStringField(TEXT("destination_path"), DestinationPath);
+    OutJson->SetNumberField(TEXT("imported_count"), Assets.Num());
+    OutJson->SetArrayField(TEXT("assets"), Assets);
     return true;
 }
 

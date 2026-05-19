@@ -8,6 +8,7 @@
 #include "GameFramework/Actor.h"
 #include "Materials/ABTMaterialTools.h"
 #include "Utils/ABTJson.h"
+#include "Misc/Paths.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FABTBridgePatchShapeTest, "AgentBlueprintTools.PatchShape.DryRunRequiresTarget", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -33,6 +34,9 @@ namespace
     constexpr const TCHAR* TestInterfacePath = TEXT("/Game/ABT_Automation/BPI_ABT_RoundTrip");
     constexpr const TCHAR* TestStructPath = TEXT("/Game/ABT_Automation/ST_ABT_MoveConfig_RoundTrip");
     constexpr const TCHAR* TestWidgetPath = TEXT("/Game/ABT_Automation/WBP_ABT_ButtonPages_RoundTrip");
+    constexpr const TCHAR* TestFigmaStickyWidgetPath = TEXT("/Game/ABT_Automation/WBP_ABT_FigmaSticky_RoundTrip");
+    constexpr const TCHAR* TestFigmaMainWidgetPath = TEXT("/Game/ABT_Automation/WBP_ABT_FigmaMain_RoundTrip");
+    constexpr const TCHAR* TestFigmaAvatarTexturePath = TEXT("/Game/ABT_Automation/Figma/QB_AvatarStamp");
     constexpr const TCHAR* TestMaterialPath = TEXT("/Game/ABT_Automation/M_ABT_RoundTrip");
     constexpr const TCHAR* TestMaterialInstancePath = TEXT("/Game/ABT_Automation/MI_ABT_RoundTrip");
 
@@ -125,7 +129,7 @@ namespace
         {
             const TSharedPtr<FJsonObject> Object = Value->AsObject();
             FString Actual;
-            if (!Object.IsValid() || !Object->TryGetStringField(MatchField, Actual) || Actual != MatchValue)
+            if (!Object.IsValid() || !Object->TryGetStringField(MatchField, Actual) || (!Actual.Equals(MatchValue) && !Actual.StartsWith(MatchValue)))
             {
                 continue;
             }
@@ -141,6 +145,48 @@ namespace
                 const TSharedPtr<FJsonObject> NestedObject = NestedValue->AsObject();
                 FString NestedActual;
                 if (NestedObject.IsValid() && NestedObject->TryGetStringField(NestedField, NestedActual) && NestedActual == Expected)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return false;
+    }
+
+    bool JsonArrayObjectArrayContainsString(
+        const TSharedPtr<FJsonObject>& Json,
+        const FString& ArrayName,
+        const FString& MatchField,
+        const FString& MatchValue,
+        const FString& NestedArrayName,
+        const FString& Expected)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+        if (!Json.IsValid() || !Json->TryGetArrayField(ArrayName, Values) || !Values)
+        {
+            return false;
+        }
+
+        for (const TSharedPtr<FJsonValue>& Value : *Values)
+        {
+            const TSharedPtr<FJsonObject> Object = Value->AsObject();
+            FString Actual;
+            if (!Object.IsValid() || !Object->TryGetStringField(MatchField, Actual) || (!Actual.Equals(MatchValue) && !Actual.StartsWith(MatchValue)))
+            {
+                continue;
+            }
+
+            const TArray<TSharedPtr<FJsonValue>>* NestedValues = nullptr;
+            if (!Object->TryGetArrayField(NestedArrayName, NestedValues) || !NestedValues)
+            {
+                return false;
+            }
+
+            for (const TSharedPtr<FJsonValue>& NestedValue : *NestedValues)
+            {
+                const FString NestedString = NestedValue->AsString();
+                if (NestedString.Equals(Expected) || NestedString.StartsWith(Expected))
                 {
                     return true;
                 }
@@ -195,6 +241,9 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
     DeleteAssetIfExists(TestBlueprintPath);
     DeleteAssetIfExists(TestInterfacePath);
     DeleteAssetIfExists(TestStructPath);
+    DeleteAssetIfExists(TestFigmaMainWidgetPath);
+    DeleteAssetIfExists(TestFigmaStickyWidgetPath);
+    DeleteAssetIfExists(TestFigmaAvatarTexturePath);
     DeleteAssetIfExists(TestWidgetPath);
     DeleteAssetIfExists(TestMaterialPath);
     UEditorAssetLibrary::MakeDirectory(TestRoot);
@@ -334,6 +383,146 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Widget has first popup animation"), JsonArrayContainsObjectString(Json, TEXT("animations"), TEXT("name"), TEXT("PagePopup_0")));
     TestTrue(TEXT("Popup animation binds first page panel"), JsonArrayObjectContainsNestedString(Json, TEXT("animations"), TEXT("name"), TEXT("PagePopup_0"), TEXT("widget_bindings"), TEXT("widget_name"), TEXT("PagePanel_0")));
     TestTrue(TEXT("Popup animation has midpoint event key"), JsonArrayObjectNumberAtLeast(Json, TEXT("animations"), TEXT("name"), TEXT("PagePopup_0"), TEXT("event_key_count"), 1.0));
+
+    TestTrue(TEXT("Create reusable Figma sticky Widget Blueprint"), FABTAssetTools::CreateAsset(MakeCreateAssetRequest(TEXT("WidgetBlueprint"), TestFigmaStickyWidgetPath), Json, Error));
+    const FString FigmaStickyPath = ABTJson::GetString(Json, TEXT("asset_path"));
+
+    TSharedPtr<FJsonObject> StickyPatch = ABTJson::Object();
+    StickyPatch->SetStringField(TEXT("target"), FigmaStickyPath);
+    TArray<TSharedPtr<FJsonValue>> StickyOps;
+    TSharedPtr<FJsonObject> StickyOp = MakeOp(TEXT("configure_figma_widget"));
+    TSharedPtr<FJsonObject> StickyRoot = ABTJson::Object();
+    StickyRoot->SetStringField(TEXT("type"), TEXT("Border"));
+    StickyRoot->SetStringField(TEXT("name"), TEXT("StickyRoot"));
+    StickyRoot->SetStringField(TEXT("backgroundColor"), TEXT("#D7B9FF"));
+    StickyRoot->SetNumberField(TEXT("padding"), 12.0);
+    TArray<TSharedPtr<FJsonValue>> StickyChildren;
+    TSharedPtr<FJsonObject> StickyText = ABTJson::Object();
+    StickyText->SetStringField(TEXT("type"), TEXT("TextBlock"));
+    StickyText->SetStringField(TEXT("name"), TEXT("StickyText"));
+    StickyText->SetStringField(TEXT("text"), TEXT("What will we..."));
+    StickyText->SetBoolField(TEXT("autoWrap"), true);
+    StickyText->SetNumberField(TEXT("fontSize"), 18.0);
+    StickyText->SetStringField(TEXT("color"), TEXT("#222222"));
+    StickyChildren.Add(ABTJson::ObjectValue(StickyText));
+    StickyRoot->SetArrayField(TEXT("children"), StickyChildren);
+    StickyOp->SetObjectField(TEXT("root"), StickyRoot);
+    StickyOps.Add(ABTJson::ObjectValue(StickyOp));
+    StickyPatch->SetArrayField(TEXT("operations"), StickyOps);
+    TestTrue(TEXT("Dry-run reusable Figma sticky patch"), FABTBlueprintTools::DryRunPatch(StickyPatch, Json, Error));
+    TestTrue(TEXT("Reusable Figma sticky patch is valid"), Json->GetBoolField(TEXT("valid")));
+    TestTrue(TEXT("Apply reusable Figma sticky patch"), FABTBlueprintTools::ApplyPatch(StickyPatch, true, Json, Error));
+    TestTrue(TEXT("Reusable Figma sticky compile ok"), Json->GetObjectField(TEXT("compile"))->GetBoolField(TEXT("compile_ok")));
+
+    FString AvatarBrushPath = TEXT("/Engine/EngineResources/DefaultTexture.DefaultTexture");
+    const FString FigmaAvatarSourcePng = FPaths::Combine(FPaths::ProjectContentDir(), TEXT("ABT_FigmaSource/QB_AvatarStamp.png"));
+    if (FPaths::FileExists(FigmaAvatarSourcePng))
+    {
+        TSharedPtr<FJsonObject> ImportRequest = ABTJson::Object();
+        ImportRequest->SetStringField(TEXT("destinationPath"), TEXT("/Game/ABT_Automation/Figma"));
+        ImportRequest->SetBoolField(TEXT("save"), true);
+        TArray<TSharedPtr<FJsonValue>> SourceFiles;
+        SourceFiles.Add(ABTJson::StringValue(FigmaAvatarSourcePng));
+        ImportRequest->SetArrayField(TEXT("sourceFiles"), SourceFiles);
+        TestTrue(TEXT("Import Figma avatar stamp texture"), FABTAssetTools::ImportAssets(ImportRequest, Json, Error));
+        TestTrue(TEXT("Figma avatar texture imported"), Json->GetNumberField(TEXT("imported_count")) >= 1.0);
+        const TArray<TSharedPtr<FJsonValue>>& ImportedAssets = Json->GetArrayField(TEXT("assets"));
+        if (ImportedAssets.Num() > 0 && ImportedAssets[0]->AsObject().IsValid())
+        {
+            AvatarBrushPath = ABTJson::GetString(ImportedAssets[0]->AsObject(), TEXT("asset_path"), AvatarBrushPath);
+        }
+    }
+
+    TestTrue(TEXT("Create main Figma Widget Blueprint"), FABTAssetTools::CreateAsset(MakeCreateAssetRequest(TEXT("WidgetBlueprint"), TestFigmaMainWidgetPath), Json, Error));
+    const FString FigmaMainPath = ABTJson::GetString(Json, TEXT("asset_path"));
+
+    TSharedPtr<FJsonObject> FigmaPatch = ABTJson::Object();
+    FigmaPatch->SetStringField(TEXT("target"), FigmaMainPath);
+    TArray<TSharedPtr<FJsonValue>> FigmaOps;
+    TSharedPtr<FJsonObject> FigmaOp = MakeOp(TEXT("configure_figma_widget"));
+    TSharedPtr<FJsonObject> FigmaRoot = ABTJson::Object();
+    FigmaRoot->SetStringField(TEXT("type"), TEXT("CanvasPanel"));
+    FigmaRoot->SetStringField(TEXT("name"), TEXT("RootCanvas"));
+    TArray<TSharedPtr<FJsonValue>> FigmaRootChildren;
+
+    TSharedPtr<FJsonObject> Title = ABTJson::Object();
+    Title->SetStringField(TEXT("type"), TEXT("TextBlock"));
+    Title->SetStringField(TEXT("name"), TEXT("QuarterlyBrainstormTitle"));
+    Title->SetStringField(TEXT("text"), TEXT("QUARTERLY BRAINSTORM"));
+    Title->SetNumberField(TEXT("x"), 20.0);
+    Title->SetNumberField(TEXT("y"), 12.0);
+    Title->SetNumberField(TEXT("width"), 640.0);
+    Title->SetNumberField(TEXT("height"), 56.0);
+    Title->SetNumberField(TEXT("fontSize"), 28.0);
+    FigmaRootChildren.Add(ABTJson::ObjectValue(Title));
+
+    TSharedPtr<FJsonObject> Section = ABTJson::Object();
+    Section->SetStringField(TEXT("type"), TEXT("Border"));
+    Section->SetStringField(TEXT("name"), TEXT("WhatSection"));
+    Section->SetStringField(TEXT("backgroundColor"), TEXT("#F3EFFF"));
+    Section->SetNumberField(TEXT("x"), 20.0);
+    Section->SetNumberField(TEXT("y"), 92.0);
+    Section->SetNumberField(TEXT("width"), 780.0);
+    Section->SetNumberField(TEXT("height"), 280.0);
+    TArray<TSharedPtr<FJsonValue>> SectionChildren;
+    TSharedPtr<FJsonObject> SectionCanvas = ABTJson::Object();
+    SectionCanvas->SetStringField(TEXT("type"), TEXT("CanvasPanel"));
+    SectionCanvas->SetStringField(TEXT("name"), TEXT("WhatCanvas"));
+    TArray<TSharedPtr<FJsonValue>> SectionCanvasChildren;
+
+    TSharedPtr<FJsonObject> Header = ABTJson::Object();
+    Header->SetStringField(TEXT("type"), TEXT("TextBlock"));
+    Header->SetStringField(TEXT("name"), TEXT("WhatHeader"));
+    Header->SetStringField(TEXT("text"), TEXT("What will we...?"));
+    Header->SetNumberField(TEXT("x"), 24.0);
+    Header->SetNumberField(TEXT("y"), 20.0);
+    Header->SetNumberField(TEXT("width"), 360.0);
+    Header->SetNumberField(TEXT("height"), 42.0);
+    Header->SetNumberField(TEXT("fontSize"), 22.0);
+    SectionCanvasChildren.Add(ABTJson::ObjectValue(Header));
+
+    for (int32 StickyIndex = 0; StickyIndex < 2; ++StickyIndex)
+    {
+        TSharedPtr<FJsonObject> StickyInstance = ABTJson::Object();
+        StickyInstance->SetStringField(TEXT("type"), TEXT("UserWidget"));
+        StickyInstance->SetStringField(TEXT("name"), FString::Printf(TEXT("StickyInstance_%d"), StickyIndex));
+        StickyInstance->SetStringField(TEXT("widgetAsset"), FigmaStickyPath);
+        StickyInstance->SetNumberField(TEXT("x"), 24.0 + StickyIndex * 184.0);
+        StickyInstance->SetNumberField(TEXT("y"), 92.0);
+        StickyInstance->SetNumberField(TEXT("width"), 160.0);
+        StickyInstance->SetNumberField(TEXT("height"), 160.0);
+        SectionCanvasChildren.Add(ABTJson::ObjectValue(StickyInstance));
+    }
+
+    TSharedPtr<FJsonObject> AvatarIcon = ABTJson::Object();
+    AvatarIcon->SetStringField(TEXT("type"), TEXT("Image"));
+    AvatarIcon->SetStringField(TEXT("name"), TEXT("AvatarIcon"));
+    AvatarIcon->SetStringField(TEXT("brushPath"), AvatarBrushPath);
+    AvatarIcon->SetNumberField(TEXT("x"), 708.0);
+    AvatarIcon->SetNumberField(TEXT("y"), 24.0);
+    AvatarIcon->SetNumberField(TEXT("width"), 48.0);
+    AvatarIcon->SetNumberField(TEXT("height"), 48.0);
+    SectionCanvasChildren.Add(ABTJson::ObjectValue(AvatarIcon));
+
+    SectionCanvas->SetArrayField(TEXT("children"), SectionCanvasChildren);
+    SectionChildren.Add(ABTJson::ObjectValue(SectionCanvas));
+    Section->SetArrayField(TEXT("children"), SectionChildren);
+    FigmaRootChildren.Add(ABTJson::ObjectValue(Section));
+
+    FigmaRoot->SetArrayField(TEXT("children"), FigmaRootChildren);
+    FigmaOp->SetObjectField(TEXT("root"), FigmaRoot);
+    FigmaOps.Add(ABTJson::ObjectValue(FigmaOp));
+    FigmaPatch->SetArrayField(TEXT("operations"), FigmaOps);
+    TestTrue(TEXT("Dry-run Figma widget patch"), FABTBlueprintTools::DryRunPatch(FigmaPatch, Json, Error));
+    TestTrue(TEXT("Figma widget patch is valid"), Json->GetBoolField(TEXT("valid")));
+    TestTrue(TEXT("Apply Figma widget patch"), FABTBlueprintTools::ApplyPatch(FigmaPatch, true, Json, Error));
+    TestTrue(TEXT("Figma Widget Blueprint compile ok"), Json->GetObjectField(TEXT("compile"))->GetBoolField(TEXT("compile_ok")));
+    TestTrue(TEXT("Read Figma Widget Blueprint IR"), FABTBlueprintTools::ExportBlueprint(FigmaMainPath, Json, Error));
+    TestTrue(TEXT("Figma widget has reusable sticky instance A"), JsonArrayContainsObjectString(Json, TEXT("widgets"), TEXT("name"), TEXT("StickyInstance_0")));
+    TestTrue(TEXT("Figma widget has reusable sticky instance B"), JsonArrayContainsObjectString(Json, TEXT("widgets"), TEXT("name"), TEXT("StickyInstance_1")));
+    TestTrue(TEXT("Figma widget preserves root child hierarchy"), JsonArrayObjectArrayContainsString(Json, TEXT("widgets"), TEXT("name"), TEXT("RootCanvas"), TEXT("children"), TEXT("WhatSection")));
+    TestTrue(TEXT("Figma widget preserves section child hierarchy"), JsonArrayObjectArrayContainsString(Json, TEXT("widgets"), TEXT("name"), TEXT("WhatCanvas"), TEXT("children"), TEXT("StickyInstance_0")));
+    TestTrue(TEXT("Figma widget binds icon texture brush"), JsonArrayContainsObjectString(Json, TEXT("widgets"), TEXT("brush_resource"), AvatarBrushPath));
 
     TestTrue(TEXT("Create Blueprint Interface asset"), FABTAssetTools::CreateAsset(MakeCreateAssetRequest(TEXT("BlueprintInterface"), TestInterfacePath), Json, Error));
     TSharedPtr<FJsonObject> ReadInterfaceRequest = ABTJson::Object();

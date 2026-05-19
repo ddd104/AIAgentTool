@@ -145,6 +145,9 @@ npm run inspect
 - `compile_blueprint`
 - `read_material`
 - `patch_material`
+- `analyze_performance`
+- `dry_run_performance_optimization`
+- `apply_performance_optimization`
 - `create_asset`
 - `read_asset`
 - `set_asset_property`

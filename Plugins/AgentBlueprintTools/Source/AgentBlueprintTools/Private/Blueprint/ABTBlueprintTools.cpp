@@ -10,6 +10,12 @@
 #include "Animation/WidgetAnimationBinding.h"
 #include "BlueprintActionDatabase.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/Border.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Components/Image.h"
+#include "Components/PanelSlot.h"
+#include "Components/PanelWidget.h"
+#include "Components/TextBlock.h"
 #include "Components/ActorComponent.h"
 #include "Components/MeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -40,6 +46,7 @@
 #include "MovieSceneTrack.h"
 #include "ScopedTransaction.h"
 #include "Sections/MovieSceneEventTriggerSection.h"
+#include "Styling/SlateBrush.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UObject/FieldIterator.h"
 #include "UObject/UnrealType.h"
@@ -127,10 +134,85 @@ namespace
         {
             // pages is optional; the tool supplies useful defaults for quick UMG prototypes.
         }
+        else if (OpName == TEXT("configure_figma_widget"))
+        {
+            if (!HasField(Op, TEXT("root")) && !HasField(Op, TEXT("children")))
+            {
+                OutMessages.Add(TEXT("configure_figma_widget.root or configure_figma_widget.children is required."));
+            }
+        }
         else
         {
             OutMessages.Add(FString::Printf(TEXT("Unsupported op: %s."), *OpName));
         }
+    }
+
+    TSharedPtr<FJsonValue> Vector2DValue(const FVector2D& Value)
+    {
+        TArray<TSharedPtr<FJsonValue>> Array;
+        Array.Add(MakeShared<FJsonValueNumber>(Value.X));
+        Array.Add(MakeShared<FJsonValueNumber>(Value.Y));
+        return MakeShared<FJsonValueArray>(Array);
+    }
+
+    TSharedPtr<FJsonValue> ColorValue(const FLinearColor& Value)
+    {
+        TArray<TSharedPtr<FJsonValue>> Array;
+        Array.Add(MakeShared<FJsonValueNumber>(Value.R));
+        Array.Add(MakeShared<FJsonValueNumber>(Value.G));
+        Array.Add(MakeShared<FJsonValueNumber>(Value.B));
+        Array.Add(MakeShared<FJsonValueNumber>(Value.A));
+        return MakeShared<FJsonValueArray>(Array);
+    }
+
+    FString BrushResourcePath(const FSlateBrush& Brush)
+    {
+        const UObject* Resource = Brush.GetResourceObject();
+        return Resource ? Resource->GetPathName() : FString();
+    }
+
+    TArray<TSharedPtr<FJsonValue>> ExportChildNames(const UPanelWidget* Panel)
+    {
+        TArray<TSharedPtr<FJsonValue>> Children;
+        if (!Panel)
+        {
+            return Children;
+        }
+
+        for (int32 Index = 0; Index < Panel->GetChildrenCount(); ++Index)
+        {
+            if (const UWidget* Child = Panel->GetChildAt(Index))
+            {
+                Children.Add(ABTJson::StringValue(Child->GetName()));
+            }
+        }
+        return Children;
+    }
+
+    TSharedPtr<FJsonObject> ExportWidgetSlot(UWidget* Widget)
+    {
+        TSharedPtr<FJsonObject> SlotJson = ABTJson::Object();
+        if (!Widget || !Widget->Slot)
+        {
+            return SlotJson;
+        }
+
+        SlotJson->SetStringField(TEXT("class"), Widget->Slot->GetClass()->GetPathName());
+        if (Widget->Slot->Parent)
+        {
+            SlotJson->SetStringField(TEXT("parent"), Widget->Slot->Parent->GetName());
+        }
+
+        if (const UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Widget->Slot))
+        {
+            SlotJson->SetField(TEXT("position"), Vector2DValue(CanvasSlot->GetPosition()));
+            SlotJson->SetField(TEXT("size"), Vector2DValue(CanvasSlot->GetSize()));
+            SlotJson->SetField(TEXT("alignment"), Vector2DValue(CanvasSlot->GetAlignment()));
+            SlotJson->SetBoolField(TEXT("auto_size"), CanvasSlot->GetAutoSize());
+            SlotJson->SetNumberField(TEXT("z_order"), CanvasSlot->GetZOrder());
+        }
+
+        return SlotJson;
     }
 
 }
@@ -327,6 +409,10 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
         {
             TArray<UWidget*> AllWidgets;
             WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
+            if (WidgetBlueprint->WidgetTree->RootWidget && !AllWidgets.Contains(WidgetBlueprint->WidgetTree->RootWidget))
+            {
+                AllWidgets.Insert(WidgetBlueprint->WidgetTree->RootWidget, 0);
+            }
             for (UWidget* Widget : AllWidgets)
             {
                 if (!Widget) continue;
@@ -334,6 +420,11 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
                 W->SetStringField(TEXT("name"), Widget->GetName());
                 W->SetStringField(TEXT("class"), Widget->GetClass()->GetPathName());
                 W->SetBoolField(TEXT("is_variable"), Widget->bIsVariable);
+                W->SetBoolField(TEXT("is_root"), WidgetBlueprint->WidgetTree->RootWidget == Widget);
+                if (Widget->Slot && Widget->Slot->Parent)
+                {
+                    W->SetStringField(TEXT("parent"), Widget->Slot->Parent->GetName());
+                }
                 W->SetStringField(TEXT("visibility"), StaticEnum<ESlateVisibility>()->GetNameStringByValue(static_cast<int64>(Widget->GetVisibility())));
                 W->SetNumberField(TEXT("render_opacity"), Widget->GetRenderOpacity());
                 const FWidgetTransform Transform = Widget->GetRenderTransform();
@@ -341,6 +432,26 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
                 Scale.Add(MakeShared<FJsonValueNumber>(Transform.Scale.X));
                 Scale.Add(MakeShared<FJsonValueNumber>(Transform.Scale.Y));
                 W->SetArrayField(TEXT("render_scale"), Scale);
+                W->SetObjectField(TEXT("slot"), ExportWidgetSlot(Widget));
+                if (const UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+                {
+                    W->SetArrayField(TEXT("children"), ExportChildNames(Panel));
+                }
+                if (const UTextBlock* TextBlock = Cast<UTextBlock>(Widget))
+                {
+                    W->SetStringField(TEXT("text"), TextBlock->GetText().ToString());
+                    W->SetNumberField(TEXT("font_size"), TextBlock->GetFont().Size);
+                    W->SetField(TEXT("text_color"), ColorValue(TextBlock->GetColorAndOpacity().GetSpecifiedColor()));
+                }
+                if (const UImage* Image = Cast<UImage>(Widget))
+                {
+                    W->SetStringField(TEXT("brush_resource"), BrushResourcePath(Image->GetBrush()));
+                    W->SetField(TEXT("image_color"), ColorValue(Image->GetColorAndOpacity()));
+                }
+                if (const UBorder* Border = Cast<UBorder>(Widget))
+                {
+                    W->SetField(TEXT("brush_color"), ColorValue(Border->GetBrushColor()));
+                }
                 Widgets.Add(ABTJson::ObjectValue(W));
             }
         }
@@ -579,6 +690,11 @@ bool FABTBlueprintTools::ApplyOperation(UBlueprint* Blueprint, const TSharedPtr<
     if (OpName == TEXT("configure_button_pages_widget"))
     {
         return ABT::Blueprint::Ops::ConfigureButtonPagesWidget(Blueprint, Op, OutMessages, OutError);
+    }
+
+    if (OpName == TEXT("configure_figma_widget"))
+    {
+        return ABT::Blueprint::Ops::ConfigureFigmaWidget(Blueprint, Op, OutMessages, OutError);
     }
 
     if (OpName == TEXT("set_static_mesh"))

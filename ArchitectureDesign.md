@@ -2,29 +2,26 @@
 
 ## 执行摘要
 
-这项需求的核心，不是“让 LLM 学会猜蓝图”，而是把 **Blueprint/Material/Asset 的真实编辑能力** 从 Unreal Editor 暴露成一个可验证、可回滚、可编译的工具链。基于官方 Codex/MCP 文档、Epic 的编辑器 API、以及已有开源 Unreal MCP/蓝图编辑插件实践，最稳妥的落地方式是：**本地 stdio MCP server + UE5 Editor-only C++ 插件 + 本地只监听 `127.0.0.1` 的桥接层 + JSON IR + Patch DSL + dry-run/apply/compile/rollback 流程**。Codex 官方支持在 `~/.codex/config.toml` 或项目级 `.codex/config.toml` 注册本地 MCP server；MCP 官方也明确把 `stdio` 作为本地、由 client 拉起的标准传输方式；而 Unreal 官方 API 则提供了足够的构件来创建函数图、成员变量、节点、pin 连接、材质表达式、资产创建与保存。citeturn6view0turn18view2turn30view0turn30view1turn7view0turn17search1turn23view0turn31search0turn33search0turn12search0turn10search0turn11search2turn9search3turn39search1
+这项需求的核心，不是“让 LLM 学会猜蓝图”，而是把 **Blueprint/Material/Asset 的真实编辑能力** 从 Unreal Editor 暴露成一个可验证、可回滚、可编译的工具链。基于官方 Codex/MCP 文档、Epic 的编辑器 API、以及已有开源 Unreal MCP/蓝图编辑插件实践，最稳妥的落地方式是：**本地 stdio MCP server + UE5 Editor-only C++ 插件 + 本地只监听 `127.0.0.1` 的桥接层 + JSON IR + Patch DSL + dry-run/apply/compile/rollback 流程**。Codex 官方支持在 `~/.codex/config.toml` 或项目级 `.codex/config.toml` 注册本地 MCP server；MCP 官方也明确把 `stdio` 作为本地、由 client 拉起的标准传输方式；而 Unreal 官方 API 则提供了足够的构件来创建函数图、成员变量、节点、pin 连接、材质表达式、资产创建与保存。
 
-我给出的交付物是一个**可下载的完整参考仓库**，包含本地 MCP server、UE5 C++ Editor Plugin 骨架、Patch DSL 示例、Codex 技能文件、`.codex/config.toml`、最小自动化测试和安装调试说明。下载链接如下：
 
-[下载完整代码仓库 ZIP](sandbox:/mnt/data/ue5-agent-blueprint-tools.zip)
-
-需要坦诚说明的是：这个仓库是在当前环境中**完成了代码生成与结构设计**，但没有在真实 UE 5.1/5.2/5.3/5.4/5.5 项目上逐一执行编译验证。因此，它应被视为**高可信的运行骨架**，而不是已经在你目标小版本上完全验证过的发行版。尤其是 Unreal 的某些 Editor API 在 5.1+ 不同小版本可能存在轻微签名差异，而 Epic 官方还明确提示 Blueprint API 参考本身是“早期进行中，部分信息可能缺失或过时”，因此实现上必须依赖**运行时反射与编辑器内真实对象**，而不能只靠文档名称匹配。citeturn4search1turn40search3
+需要坦诚说明的是：这个仓库是在当前环境中**完成了代码生成与结构设计**，但没有在真实 UE 5.1/5.2/5.3/5.4/5.5 项目上逐一执行编译验证。因此，它应被视为**高可信的运行骨架**，而不是已经在你目标小版本上完全验证过的发行版。尤其是 Unreal 的某些 Editor API 在 5.1+ 不同小版本可能存在轻微签名差异，而 Epic 官方还明确提示 Blueprint API 参考本身是“早期进行中，部分信息可能缺失或过时”，因此实现上必须依赖**运行时反射与编辑器内真实对象**，而不能只靠文档名称匹配。
 
 ## 证据基础与设计结论
 
-从 Codex 侧看，官方已经给出了把 MCP server 接到 Codex 的一整套配置模型：`config.toml` 中的 `[mcp_servers.<id>]` 支持 `command`、`args`、`cwd`、`env`、`enabled_tools`、`disabled_tools`、`startup_timeout_sec`、`tool_timeout_sec` 等键；项目级 `.codex/config.toml` 也会在受信任项目中生效。Codex 还支持 `AGENTS.md` 分层加载项目指令，以及 Skills 目录下以 `SKILL.md` 为核心的技能封装，这正好适合把“先 read、再 dry-run、再 apply、最后 compile”的编辑工作流固化成 agent 的默认行为。citeturn6view0turn7view7turn18view2turn20view0turn6view1turn7view6
+从 Codex 侧看，官方已经给出了把 MCP server 接到 Codex 的一整套配置模型：`config.toml` 中的 `[mcp_servers.<id>]` 支持 `command`、`args`、`cwd`、`env`、`enabled_tools`、`disabled_tools`、`startup_timeout_sec`、`tool_timeout_sec` 等键；项目级 `.codex/config.toml` 也会在受信任项目中生效。Codex 还支持 `AGENTS.md` 分层加载项目指令，以及 Skills 目录下以 `SKILL.md` 为核心的技能封装，这正好适合把“先 read、再 dry-run、再 apply、最后 compile”的编辑工作流固化成 agent 的默认行为。
 
-从 MCP 侧看，官方文档把 server 能力分为 **tools / resources / prompts**，并明确指出本地集成场景通常使用 `stdio`；工具本身是由模型自动发现、根据 schema 调用的。这意味着最适合 UE 编辑器的做法，不是把 `.uasset` 暴露成文件让 agent 乱写，而是把 “读蓝图 IR”“列出 BlueprintCallable 函数”“校验 patch”“应用 patch”“编译并回传日志” 都做成**结构化 MCP tools**。这样，agent 真正理解的是**图结构与编辑结果**，而不是二进制资产。citeturn7view0turn7view1turn7view3turn22search6turn23view0
+从 MCP 侧看，官方文档把 server 能力分为 **tools / resources / prompts**，并明确指出本地集成场景通常使用 `stdio`；工具本身是由模型自动发现、根据 schema 调用的。这意味着最适合 UE 编辑器的做法，不是把 `.uasset` 暴露成文件让 agent 乱写，而是把 “读蓝图 IR”“列出 BlueprintCallable 函数”“校验 patch”“应用 patch”“编译并回传日志” 都做成**结构化 MCP tools**。这样，agent 真正理解的是**图结构与编辑结果**，而不是二进制资产。
 
-从 Unreal Editor 侧看，官方 API 已经覆盖了这个工作流的关键节点。`FBlueprintEditorUtils` 能添加函数图、成员变量并标记蓝图发生结构修改；`FKismetEditorUtilities` 能触发 Blueprint 编译；`UK2Node_CallFunction` 负责把某个 `UFunction` 映射成真实调用节点；`UEdGraphSchema_K2` 则提供 pin 连接与默认值设置；`FGraphNodeCreator` 负责正确构造图节点。材质侧，`UMaterialEditingLibrary` 提供创建表达式、连接表达式、连接材质属性、重编译材质以及设置材质实例参数的方法。资产侧，`FAssetToolsModule`、`UEditorAssetLibrary` 提供创建、加载、复制、重命名、保存资产的基础能力。citeturn31search0turn33search0turn36search0turn12search0turn9search2turn12search2turn24search0turn24search1turn10search0turn11search2turn37search4turn40search4turn11search1turn9search3turn39search1
+从 Unreal Editor 侧看，官方 API 已经覆盖了这个工作流的关键节点。`FBlueprintEditorUtils` 能添加函数图、成员变量并标记蓝图发生结构修改；`FKismetEditorUtilities` 能触发 Blueprint 编译；`UK2Node_CallFunction` 负责把某个 `UFunction` 映射成真实调用节点；`UEdGraphSchema_K2` 则提供 pin 连接与默认值设置；`FGraphNodeCreator` 负责正确构造图节点。材质侧，`UMaterialEditingLibrary` 提供创建表达式、连接表达式、连接材质属性、重编译材质以及设置材质实例参数的方法。资产侧，`FAssetToolsModule`、`UEditorAssetLibrary` 提供创建、加载、复制、重命名、保存资产的基础能力。
 
-从架构可行性看，Epic 官方已经有两条相关证据链：一是 `HttpServer` 模块本身存在，二是 Remote Control 系统就是通过编辑器内 web server 接收 HTTP/WebSocket 请求来远程控制 Unreal。官方文档还特别说明绑定 `127.0.0.1` 时只允许本机访问。这使得“**UE 插件内部启动 localhost bridge，被本地 MCP server 调用**”成为一个合理、简洁、可审计的方案。它比直接把 UE Python 暴露给 agent 更利于控制权限边界，也比让 agent 直接操作二进制 `.uasset` 更安全。citeturn21search2turn21search1turn21search6turn21search11
+从架构可行性看，Epic 官方已经有两条相关证据链：一是 `HttpServer` 模块本身存在，二是 Remote Control 系统就是通过编辑器内 web server 接收 HTTP/WebSocket 请求来远程控制 Unreal。官方文档还特别说明绑定 `127.0.0.1` 时只允许本机访问。这使得“**UE 插件内部启动 localhost bridge，被本地 MCP server 调用**”成为一个合理、简洁、可审计的方案。它比直接把 UE Python 暴露给 agent 更利于控制权限边界，也比让 agent 直接操作二进制 `.uasset` 更安全。
 
-开源项目也证明了这个方向是现实可行的。`ElgKismetEditorWidget` 已经展示了一个 editor-only 插件如何在 Blueprint Editor 中暴露图编译事件、节点选择事件，以及变量/函数/Macro/Event Dispatcher 的编辑能力；`flopperam/unreal-engine-mcp` 公开版展示了“读 Blueprint 内容、加节点、连节点、创建变量”的基础工具集；`ChiR24/Unreal_mcp` 则展示了“TypeScript MCP bridge + C++ automation bridge + 命令安全策略”的整体打法。因此，本报告中的实现不是拍脑袋构想，而是建立在**官方 API 的可执行边界**和**已有社区实践**这两条证据上的综合收敛。citeturn14view3turn14view0turn14view1turn14view2
+开源项目也证明了这个方向是现实可行的。`ElgKismetEditorWidget` 已经展示了一个 editor-only 插件如何在 Blueprint Editor 中暴露图编译事件、节点选择事件，以及变量/函数/Macro/Event Dispatcher 的编辑能力；`flopperam/unreal-engine-mcp` 公开版展示了“读 Blueprint 内容、加节点、连节点、创建变量”的基础工具集；`ChiR24/Unreal_mcp` 则展示了“TypeScript MCP bridge + C++ automation bridge + 命令安全策略”的整体打法。因此，本报告中的实现不是拍脑袋构想，而是建立在**官方 API 的可执行边界**和**已有社区实践**这两条证据上的综合收敛。
 
 ## 完整实现总览
 
-这套实现的最小闭环是：**Codex 通过 MCP 调用本地 `server.js`，`server.js` 把 YAML Patch 解析成 JSON 并转发给 UE 插件的本地 HTTP bridge，插件在 game thread 上执行 Blueprint/Material/Asset 编辑，然后 compile，并把日志返回给 MCP client。** 这个闭环与 Codex 官方的本地 MCP 配置方式、MCP 的 stdio transport 模型，以及 Unreal Editor 的 editor-only 模块化方式是完全对齐的。citeturn6view0turn23view0turn10search3turn15search0turn15search1
+这套实现的最小闭环是：**Codex 通过 MCP 调用本地 `server.js`，`server.js` 把 YAML Patch 解析成 JSON 并转发给 UE 插件的本地 HTTP bridge，插件在 game thread 上执行 Blueprint/Material/Asset 编辑，然后 compile，并把日志返回给 MCP client。** 这个闭环与 Codex 官方的本地 MCP 配置方式、MCP 的 stdio transport 模型，以及 Unreal Editor 的 editor-only 模块化方式是完全对齐的。
 
 ```mermaid
 sequenceDiagram
@@ -50,7 +47,7 @@ sequenceDiagram
     MCP-->>Codex: 成功 / 失败 / 日志
 ```
 
-下面这个功能矩阵对应你要求的重点能力。其中“官方依据”一列是设计所依赖的 API 面；“本实现状态”则是 ZIP 中已给出的参考落地。官方文档支持 Blueprint 图、材质图、资产和插件/模块组织方式；开源项目则证明这一类 agent-bridge 工作流已经有现实先例。citeturn31search0turn33search0turn12search0turn10search0turn11search2turn11search1turn9search3turn14view0turn14view2turn14view3
+下面这个功能矩阵对应你要求的重点能力。其中“官方依据”一列是设计所依赖的 API 面；“本实现状态”则是 ZIP 中已给出的参考落地。官方文档支持 Blueprint 图、材质图、资产和插件/模块组织方式；开源项目则证明这一类 agent-bridge 工作流已经有现实先例。
 
 | 能力 | 官方依据 | 本实现状态 |
 |---|---|---|
@@ -64,8 +61,6 @@ sequenceDiagram
 | 资产创建/复制/属性设置 | `FAssetToolsModule` / `UEditorAssetLibrary` | 已实现基础操作 |
 | 技能与项目规则 | `SKILL.md`、`AGENTS.md` | 已实现 |
 | 自动化验证 | Automation Tests + dry-run/apply/compile 路径 | 已实现最小测试 |
-
-我建议把你的落地计划分成两个阶段，和你要求的测试目标一致。**Phase 1** 先只做“读 + 分析 + 可调用函数发现”；**Phase 2** 再开放“变量、函数、Branch、变量读写、CallFunction、材质表达式、资产创建”这些最小写能力。这样可以先让 agent 真正理解 Blueprint 逻辑，再让它写逻辑，而不是一开始就让它对编辑器做大规模破坏性写入。这个策略也符合 Codex 的安全配置思路：工作区内写权限与 approval policy 应该按风险分层，而不是直接开 `danger-full-access`。citeturn38search3turn38search4turn38search9
 
 ### 代码仓库清单
 
@@ -86,13 +81,11 @@ ZIP 中的仓库已经按“可直接放进 UE 工程”的形式组织好了，
 | `examples/patches/*.yaml` | 最小可执行 Patch 示例 |
 | `.../Tests/ABTAutomationTests.cpp` | Phase 1/2 自动化测试骨架 |
 
-## 关键文件与代码
 
-下面不重复贴出 ZIP 中的所有文件全文，而是把你点名需要的关键文件内容压缩成“核心片段 + 设计说明”。完整版本请直接使用 ZIP。
 
 ### MCP server
 
-官方 TypeScript/Node SDK 当前建议用 `@modelcontextprotocol/server` 创建 server，并通过 `StdioServerTransport` 连接到本地进程，同时用 schema 注册 tools；Codex 也支持把这种本地 stdio server 作为 `[mcp_servers.<id>]` 接入。citeturn23view0turn6view0turn18view2
+官方 TypeScript/Node SDK 当前建议用 `@modelcontextprotocol/server` 创建 server，并通过 `StdioServerTransport` 连接到本地进程，同时用 schema 注册 tools；Codex 也支持把这种本地 stdio server 作为 `[mcp_servers.<id>]` 接入。
 
 `mcp-server/package.json`
 
@@ -198,11 +191,11 @@ server.registerTool(
 await server.connect(new StdioServerTransport());
 ```
 
-这个 server 只做三件事：接入 MCP、解析 YAML、转发到 UE bridge。也就是说，**真正的编辑权**始终在 Unreal Editor 插件一侧，而不是 Node 进程一侧。这种职责拆分使权限边界更清楚：MCP server 只是“协议适配器”，UE 插件才是“编辑执行器”。这与 MCP 工具模型以及 Codex 的本地 server 集成方式是吻合的。citeturn7view0turn7view3turn23view0turn6view0
+这个 server 只做三件事：接入 MCP、解析 YAML、转发到 UE bridge。也就是说，**真正的编辑权**始终在 Unreal Editor 插件一侧，而不是 Node 进程一侧。这种职责拆分使权限边界更清楚：MCP server 只是“协议适配器”，UE 插件才是“编辑执行器”。这与 MCP 工具模型以及 Codex 的本地 server 集成方式是吻合的。
 
 ### UE 插件骨架
 
-Unreal 官方要求插件通过 `.uplugin` 描述，并通过模块列表声明加载模块；同时，Editor module 只在 editor build 中编译，这正符合你要做的“蓝图编辑器内 agent 工作流”。插件还可以自带源码与内容，这使得把它直接放到项目 `Plugins/` 目录成为最直接的安装方式。citeturn15search0turn15search1turn10search3turn10search11
+Unreal 官方要求插件通过 `.uplugin` 描述，并通过模块列表声明加载模块；同时，Editor module 只在 editor build 中编译。
 
 `AgentBlueprintTools.uplugin`
 
@@ -260,7 +253,7 @@ public class AgentBlueprintTools : ModuleRules
 
 ### 本地 bridge
 
-bridge 的实现依据，是 Unreal 可在 editor 内运行 HTTP server 这件事本身已经被官方 `HttpServer` 模块与 Remote Control 体系证明可行；本实现只是没有直接复用 Remote Control，而是做了一个**更窄、更可审计的本地专用桥**。citeturn21search2turn21search1turn21search6
+bridge 的实现依据，是 Unreal 可在 editor 内运行 HTTP server 这件事本身已经被官方 `HttpServer` 模块与 Remote Control 体系证明可行；本实现只是没有直接复用 Remote Control，而是做了一个**更窄、更可审计的本地专用桥**。
 
 `ABTLocalBridgeServer.h`
 
@@ -327,7 +320,7 @@ Router->BindRoute(
     });
 ```
 
-这里最关键的实现点不是路由本身，而是：**所有编辑动作都必须切回 game thread 执行**。Blueprint graph、asset 和 material graph 都不应该在后台线程随意改写。ZIP 里对应的 `RunOnGameThreadAndWait` 已经包含在 bridge 文件中，这是把 HTTP server 接到编辑器 API 时必须保留的边界。这个约束虽然不是 MCP 或 Codex 文档层面的内容，但它是 Unreal Editor 侧能否稳定运行的关键工程前提。
+这里最关键的实现点不是路由本身，而是：**所有编辑动作都必须切回 game thread 执行**。Blueprint graph、asset 和 material graph 都不应该在后台线程随意改写。 `RunOnGameThreadAndWait` 是把 HTTP server 接到编辑器 API 时必须保留的边界。这个约束虽然不是 MCP 或 Codex 文档层面的内容，但它是 Unreal Editor 侧能否稳定运行的关键工程前提。
 
 ### Blueprint IR 与 Patch 应用器
 
@@ -337,7 +330,7 @@ Blueprint 导出靠 `UBlueprint`、`UEdGraph`、`UEdGraphPin`；
 节点构造靠 `FGraphNodeCreator` 与 `UK2Node_*`；  
 pin 连接靠 `UEdGraphSchema_K2::TryCreateConnection`；  
 编译靠 `FKismetEditorUtilities::CompileBlueprint`；  
-结构修改后要显式 `MarkBlueprintAsStructurallyModified`。citeturn31search0turn33search0turn24search0turn12search2turn12search0turn36search0
+结构修改后要显式 `MarkBlueprintAsStructurallyModified`。
 
 `ABTBlueprintTools.h`
 
@@ -393,11 +386,11 @@ if (!CompileJson->GetBoolField(TEXT("compile_ok")))
 }
 ```
 
-这个设计满足了你要求的自动化验证链条：**dry-run → apply → compile → rollback**。严格说，`FScopedTransaction::Cancel()` 是否能在你具体小版本和具体改动组合上覆盖所有内存态副作用，仍然要在目标工程里实测；但至少从 Unreal 的事务系统设计上，它是做 editor transactable block 的正确入口之一，而编译结果本身在 Blueprint Editor 里也本来就应该通过 compiler results/log 来判断是否成功。citeturn28search0turn27search0turn12search0turn29search0
+这个设计满足了自动化验证链条：**dry-run → apply → compile → rollback**。但是`FScopedTransaction::Cancel()` 是否能在具体小版本和具体改动组合上覆盖所有内存态副作用，仍然要在目标工程里实测；但至少从 Unreal 的事务系统设计上，它是做 editor transactable block 的正确入口之一，而编译结果本身在 Blueprint Editor 里也本来就应该通过 compiler results/log 来判断是否成功。
 
 ### 材质与资产能力
 
-材质侧的核心 API 直接来自 `UMaterialEditingLibrary`：可以创建材质表达式、连接表达式、连接到材质属性、重编译材质，也可以设置材质实例参数。资产侧则依赖 `FAssetToolsModule` 与 `UEditorAssetLibrary` 完成创建、加载、复制、保存等基本动作。citeturn10search0turn11search2turn37search4turn40search4turn40search0turn40search1turn11search1turn9search3turn39search1
+材质侧的核心 API 直接来自 `UMaterialEditingLibrary`：可以创建材质表达式、连接表达式、连接到材质属性、重编译材质，也可以设置材质实例参数。资产侧则依赖 `FAssetToolsModule` 与 `UEditorAssetLibrary` 完成创建、加载、复制、保存等基本动作。
 
 `ABTMaterialTools.cpp` 关键片段：
 
@@ -432,7 +425,7 @@ if (!UEditorAssetLibrary::SaveLoadedAsset(Object, false))
 
 ### Codex 技能和项目配置
 
-Codex Skills 官方格式要求目录中至少有一个 `SKILL.md`，而 `AGENTS.md` 则会在全局与项目路径上按层级自动加载。对于你这个场景，最好的做法是：把“先读 IR、再 dry-run”的行为写进 skill 与项目规则，而不是每次都重新 prompt。citeturn6view1turn20view0
+Codex Skills 官方格式要求目录中至少有一个 `SKILL.md`，而 `AGENTS.md` 则会在全局与项目路径上按层级自动加载。最好的做法是：把“先读 IR、再 dry-run”的行为写进 skill 与项目规则，而不是每次都重新 prompt。
 
 `skills/ue5-blueprint-agent/SKILL.md`
 
@@ -473,7 +466,7 @@ tool_timeout_sec = 180
 env = { ABT_BRIDGE_URL = "http://127.0.0.1:31055", ABT_BRIDGE_TOKEN = "change-me-local" }
 ```
 
-这个配置选择了官方推荐的“workspace-write + on-request approvals”风格，而不是完全放开。对你的 UE agent 来说，这非常重要：它允许 Codex 在工程目录内自动读写代码与文本配置，但对网络和更高风险动作仍然保留审批边界。citeturn38search3turn38search4turn38search9
+这个配置选择了官方推荐的“workspace-write + on-request approvals”风格，而不是完全放开。对你的 UE agent 来说，这非常重要：它允许 Codex 在工程目录内自动读写代码与文本配置，但对网络和更高风险动作仍然保留审批边界。
 
 ### 示例 IR 与 Patch DSL
 
@@ -535,7 +528,7 @@ operations:
 
 ## 安装编译与调试
 
-官方文档对 Unreal 插件与模块的组织要求很明确：插件通过 `.uplugin` 被发现；模块通过 `Build.cs` 被 Unreal Build Tool 识别；Editor module 只在 editor build 中编译。Epic 也提供了插件构建与 Visual Studio 工具链兼容的官方指导，因此最佳实践仍然是：把插件放到项目 `Plugins/` 下，通过工程自身的 C++ 构建链来编译，而不是把它当成独立 DLL 黑盒塞进去。citeturn15search0turn15search1turn15search3turn41search4turn41search5turn41search7turn41search9turn41search13
+官方文档对 Unreal 插件与模块的组织要求很明确：插件通过 `.uplugin` 被发现；模块通过 `Build.cs` 被 Unreal Build Tool 识别；Editor module 只在 editor build 中编译。Epic 也提供了插件构建与 Visual Studio 工具链兼容的官方指导，因此最佳实践仍然是：把插件放到项目 `Plugins/` 下，通过工程自身的 C++ 构建链来编译，而不是把它当成独立 DLL 黑盒塞进去。
 
 ### 在 Windows 10/11 与 UE5 编辑器中启用插件
 
@@ -556,7 +549,7 @@ operations:
 
 ### MCP 启动与调试
 
-Codex 官方提供了 CLI 侧的 `codex mcp add`、`codex mcp list`，并且在 TUI 里可以用 `/mcp` 查看活动 server；MCP 官方 SDK 也提供了本地 stdio server 的标准模式。因此，调试顺序建议是：**先 bridge health，再单独启动 `node server.js`，最后再把它接进 Codex**。citeturn6view0turn7view4turn23view0
+Codex 官方提供了 CLI 侧的 `codex mcp add`、`codex mcp list`，并且在 TUI 里可以用 `/mcp` 查看活动 server；MCP 官方 SDK 也提供了本地 stdio server 的标准模式。因此，调试顺序建议是：**先 bridge health，再单独启动 `node server.js`，最后再把它接进 Codex**。
 
 最小调试顺序如下：
 
@@ -581,13 +574,13 @@ node server.js
 codex mcp list
 ```
 
-如果你习惯 Inspector 风格的调试，也可以把本地 stdio server 包起来做手工调用；这不是 Codex 独有功能，而是 MCP 生态的常见调试方式。官方示例已经展示了 inspector 可以包装一个 stdio 命令运行 MCP server。citeturn19search12
+如果你习惯 Inspector 风格的调试，也可以把本地 stdio server 包起来做手工调用；这不是 Codex 独有功能，而是 MCP 生态的常见调试方式。官方示例已经展示了 inspector 可以包装一个 stdio 命令运行 MCP server。
 
 ## 测试验证与安全边界
 
 ### 最小测试用例
 
-Phase 1 与 Phase 2 的目标应该严格区分。Phase 1 只证明“agent 看懂了 graph”；Phase 2 才证明“agent 能修改 graph 且安全返回”。这也是为什么我在 ZIP 中放了 `ABTAutomationTests.cpp`：它先确保测试蓝图存在，再分别测导出和 patch + compile。这个思路和社区里已有的 Blueprint graph 编辑插件、基础 Unreal MCP 工具有一致性：先打通基础图操作，再逐步放开更多节点类型。citeturn14view0turn14view3
+Phase 1 与 Phase 2 的目标应该严格区分。Phase 1 只证明“agent 看懂了 graph”；Phase 2 才证明“agent 能修改 graph 且安全返回”。这也是 `ABTAutomationTests.cpp`的作用：它先确保测试蓝图存在，再分别测导出和 patch + compile。这个思路和社区里已有的 Blueprint graph 编辑插件、基础 Unreal MCP 工具有一致性：先打通基础图操作，再逐步放开更多节点类型。
 
 | 阶段 | 目标 | 通过标准 |
 |---|---|---|
@@ -598,7 +591,7 @@ Phase 1 与 Phase 2 的目标应该严格区分。Phase 1 只证明“agent 看�
 
 ### 自动化验证流程
 
-你要求的 `dry-run、apply、compile、rollback`，我建议永远按下面这个固定链条执行：
+根据要求的 `dry-run、apply、compile、rollback`，建议永远按下面这个固定链条执行：
 
 1. `read_blueprint`
 2. `list_callable_functions`，如果 patch 中包含 `CallFunction`
@@ -608,28 +601,24 @@ Phase 1 与 Phase 2 的目标应该严格区分。Phase 1 只证明“agent 看�
 6. 如果失败，确保 `rolledBack = true`
 7. 只有成功时才 `saveOnSuccess = true`
 
-这个流程之所以重要，是因为 Blueprint graph 编辑的失败模式并不只来自“函数不存在”，还包括 pin 类型不匹配、图名冲突、函数图 Entry/Result 语义错误等。Epic 的 compiler results 面板本来就是让你看这些错误的，因此把 compile log 原样回传给 agent，是让 agent 真正“理解为何失败”的重要反馈通道。citeturn29search0turn12search0
+这个流程之所以重要，是因为 Blueprint graph 编辑的失败模式并不只来自“函数不存在”，还包括 pin 类型不匹配、图名冲突、函数图 Entry/Result 语义错误等。Epic 的 compiler results 面板本来就是让你看这些错误的，因此把 compile log 原样回传给 agent，是让 agent 真正“理解为何失败”的重要反馈通道。
 
 ### 安全策略与权限说明
 
 安全边界应该设置在四层，而不是只靠 prompt：
 
-首先，**网络边界**：UE bridge 只监听 `127.0.0.1`，不对局域网开放；官方 Remote Control 文档也明确把 `127.0.0.1` 视为仅本地访问配置。citeturn21search11
+首先，**网络边界**：UE bridge 只监听 `127.0.0.1`，不对局域网开放；官方 Remote Control 文档也明确把 `127.0.0.1` 视为仅本地访问配置。
 
 其次，**调用边界**：所有写操作都要求 `x-abt-token`；并建议把 `ABT_BRIDGE_TOKEN` 设成系统环境变量而不是硬编码到仓库里。这个设计虽然不是 Epic 官方 API 部分，但它是最简单有效的 localhost 权限分层。
 
-再次，**MCP/Codex 边界**：项目级 `.codex/config.toml` 使用 `sandbox_mode = "workspace-write"` 与 `approval_policy = "on-request"`，不要把工程默认配置成“无审批 + 全访问”。Codex 官方已经给出了这种风险分层的明确建议。citeturn38search3turn38search4turn38search9
+再次，**MCP/Codex 边界**：项目级 `.codex/config.toml` 使用 `sandbox_mode = "workspace-write"` 与 `approval_policy = "on-request"`，不要把工程默认配置成“无审批 + 全访问”。Codex 官方已经给出了这种风险分层的明确建议。
 
-最后，**编辑边界**：ZIP 中的 Patch 应用器只放开了基础节点和基础 op。对于你未来最想要的复杂能力——例如 Macro 实例、Delegate 绑定、Interface message、Latent、Timeline、Animation Blueprint、Behavior Tree、Niagara graph——我建议继续沿用“先只读 IR，再做最小 DSL，再做 dry-run”的扩展策略，而不是一次性让 agent 获得“任意调用一切 Editor API”的解释权。
+最后，**编辑边界**：Patch 应用器只放开了基础节点和基础 op。对于未来最想要的复杂能力——例如 Macro 实例、Delegate 绑定、Interface message、Latent、Timeline、Animation Blueprint、Behavior Tree、Niagara graph——会继续沿用“先只读 IR，再做最小 DSL，再做 dry-run”的扩展策略，而不是一次性让 agent 获得“任意调用一切 Editor API”的解释权。
 
 ### 开放问题与局限
 
-这份实现还有几个需要你在目标工程里尽快确认的点：
-
-其一，虽然核心 API 选择都来自官方文档，但 Unreal 5.1+ 的某些 Editor API 在具体小版本上可能存在轻微签名差异；尤其是某些 `FBlueprintEditorUtils`、`USCS_Node`、`HttpServer` 细节，可能需要一次本地编译后做小修。官方 Blueprint API 参考本身也承认有缺项与过时风险。citeturn4search1turn40search3
+其一，虽然核心 API 选择都来自官方文档，但 Unreal 5.1+ 的某些 Editor API 在具体小版本上可能存在轻微签名差异；尤其是某些 `FBlueprintEditorUtils`、`USCS_Node`、`HttpServer` 细节，可能不同的版本都会有小的修改。
 
 其二，当前 Patch DSL 的写入能力是**刻意收敛**的，只覆盖最小闭环：变量、函数、Branch、变量 Get/Set、CallFunction、pin 默认值、CDO 属性设置。它已经足以支撑“理解蓝图逻辑并写基础逻辑”，但还不是“完整覆盖所有 Blueprint 编辑器动作”。
 
 其三，材质支持目前是“基础可用”而不是“完整材质图引擎”：已经涵盖表达式创建、表达式连接、连接材质属性、材质实例参数设置，但还没有做复杂的节点级读写对齐、函数图深入支持和所有参数类型支持。
-
-其四，这份 ZIP 是**最适合作为你自己的起始仓库**，而不是最终产品形态。真正进入生产后，你还应该补上函数白名单、路径白名单、审计日志、Patch provenance、以及更细的回滚策略。
