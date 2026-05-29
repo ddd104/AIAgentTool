@@ -18,7 +18,8 @@ Codex / Agent
 mcp-server/                         Node.js stdio MCP server
 Plugins/AgentBlueprintTools/         UE5 Editor-only C++ plugin
 examples/patches/                    Blueprint / Material / Asset patch 示例
-skills/ue5-blueprint-agent/          Codex Skill
+.agents/skills/ue5-blueprint-agent/  项目级 Codex Skill 自动加载入口
+skills/ue5-blueprint-agent/          可分发的 Codex Skill 副本
 .codex/config.toml                   Codex MCP 配置示例
 AGENTS.md                            项目级 agent 规则
 docs/                                架构、DSL、API、排错文档
@@ -149,6 +150,7 @@ npm run inspect
 - `dry_run_performance_optimization`
 - `apply_performance_optimization`
 - `create_asset`
+- `import_assets`
 - `read_asset`
 - `set_asset_property`
 - `save_asset`

@@ -1,4 +1,4 @@
-#include "Performance/ABTPerformanceTools.h"
+#include "ABTPerformanceTools.h"
 #include "Utils/ABTJson.h"
 
 #include "AssetRegistry/ARFilter.h"
@@ -15,6 +15,7 @@
 #include "Engine/Texture2D.h"
 #include "HAL/FileManager.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "ScopedTransaction.h"
@@ -104,7 +105,7 @@ namespace
         return Targets;
     }
 
-    TArray<FString> ParseContentPaths(const TSharedPtr<FJsonObject>& Request, FString& OutError)
+    TArray<FString> ParseContentPaths(const TSharedPtr<FJsonObject>& Request, FString& OutError, bool bUseDefaultPath)
     {
         TArray<FString> Paths;
         const TArray<TSharedPtr<FJsonValue>>* PathValues = nullptr;
@@ -127,9 +128,34 @@ namespace
             }
         }
 
-        if (Paths.Num() == 0)
+        if (Paths.Num() == 0 && bUseDefaultPath)
         {
             Paths.Add(TEXT("/Game"));
+        }
+        return Paths;
+    }
+
+    TArray<FString> ParseAssetPaths(const TSharedPtr<FJsonObject>& Request, FString& OutError)
+    {
+        TArray<FString> Paths;
+        const TArray<TSharedPtr<FJsonValue>>* PathValues = nullptr;
+        if (Request.IsValid() && Request->TryGetArrayField(TEXT("assetPaths"), PathValues) && PathValues)
+        {
+            for (const TSharedPtr<FJsonValue>& Value : *PathValues)
+            {
+                FString Path = Value->AsString();
+                Path.TrimStartAndEndInline();
+                if (Path.IsEmpty())
+                {
+                    continue;
+                }
+                if (!Path.StartsWith(TEXT("/Game")))
+                {
+                    OutError = FString::Printf(TEXT("assetPaths entries must stay under /Game: %s"), *Path);
+                    return {};
+                }
+                Paths.AddUnique(Path);
+            }
         }
         return Paths;
     }
@@ -202,7 +228,7 @@ namespace
         return UTexture::GetMipGenSettingsString(Settings);
     }
 
-    FString BlendModeToString(EBlendMode BlendMode)
+    FString PerformanceBlendModeToString(EBlendMode BlendMode)
     {
         switch (BlendMode)
         {
@@ -332,6 +358,182 @@ namespace
         return true;
     }
 
+    bool TryParseSectionHeader(const FString& Line, FString& OutSection)
+    {
+        FString Trimmed = Line;
+        Trimmed.TrimStartAndEndInline();
+        if (Trimmed.Len() < 3 || Trimmed[0] != TCHAR('[') || Trimmed[Trimmed.Len() - 1] != TCHAR(']'))
+        {
+            return false;
+        }
+
+        OutSection = Trimmed.Mid(1, Trimmed.Len() - 2);
+        OutSection.TrimStartAndEndInline();
+        return !OutSection.IsEmpty();
+    }
+
+    bool TryParseCVarLine(const FString& Line, FString& OutName, FString& OutValue)
+    {
+        FString Trimmed = Line;
+        Trimmed.TrimStartAndEndInline();
+        if (!Trimmed.StartsWith(TEXT("+CVars=")) && !Trimmed.StartsWith(TEXT("CVars=")))
+        {
+            return false;
+        }
+
+        int32 PrefixEquals = INDEX_NONE;
+        if (!Trimmed.FindChar(TCHAR('='), PrefixEquals))
+        {
+            return false;
+        }
+
+        FString Assignment = Trimmed.Mid(PrefixEquals + 1);
+        Assignment.TrimStartAndEndInline();
+        Assignment.TrimQuotesInline();
+
+        int32 CVarEquals = INDEX_NONE;
+        if (!Assignment.FindChar(TCHAR('='), CVarEquals))
+        {
+            OutName = Assignment;
+            OutValue.Reset();
+        }
+        else
+        {
+            OutName = Assignment.Left(CVarEquals);
+            OutValue = Assignment.Mid(CVarEquals + 1);
+        }
+
+        OutName.TrimStartAndEndInline();
+        OutValue.TrimStartAndEndInline();
+        return !OutName.IsEmpty();
+    }
+
+    FString GetDeviceProfileCVarValue(const FString& Filename, const FString& Section, const FString& CVar)
+    {
+        FString Text;
+        if (!FFileHelper::LoadFileToString(Text, *Filename))
+        {
+            return FString();
+        }
+
+        TArray<FString> Lines;
+        Text.ParseIntoArrayLines(Lines, false);
+        bool bInTargetSection = false;
+
+        for (const FString& Line : Lines)
+        {
+            FString CurrentSection;
+            if (TryParseSectionHeader(Line, CurrentSection))
+            {
+                bInTargetSection = CurrentSection.Equals(Section, ESearchCase::IgnoreCase);
+                continue;
+            }
+
+            if (!bInTargetSection)
+            {
+                continue;
+            }
+
+            FString Name;
+            FString Value;
+            if (TryParseCVarLine(Line, Name, Value) && Name.Equals(CVar, ESearchCase::IgnoreCase))
+            {
+                return Value;
+            }
+        }
+
+        return FString();
+    }
+
+    bool WriteDeviceProfileCVarValue(
+        const FString& Filename,
+        const FString& Section,
+        const FString& CVar,
+        const FString& Value,
+        FString& OutError)
+    {
+        FString Text;
+        if (FPaths::FileExists(Filename) && !FFileHelper::LoadFileToString(Text, *Filename))
+        {
+            OutError = FString::Printf(TEXT("Failed to read config file: %s"), *Filename);
+            return false;
+        }
+
+        TArray<FString> Lines;
+        Text.ParseIntoArrayLines(Lines, false);
+
+        const FString NewLine = FString::Printf(TEXT("+CVars=%s=%s"), *CVar, *Value);
+        bool bFoundSection = false;
+        bool bInTargetSection = false;
+        int32 InsertIndex = Lines.Num();
+
+        for (int32 Index = 0; Index < Lines.Num(); ++Index)
+        {
+            FString CurrentSection;
+            if (TryParseSectionHeader(Lines[Index], CurrentSection))
+            {
+                if (bInTargetSection)
+                {
+                    InsertIndex = Index;
+                    bInTargetSection = false;
+                }
+
+                if (CurrentSection.Equals(Section, ESearchCase::IgnoreCase))
+                {
+                    bFoundSection = true;
+                    bInTargetSection = true;
+                    InsertIndex = Index + 1;
+                }
+                continue;
+            }
+
+            if (!bInTargetSection)
+            {
+                continue;
+            }
+
+            InsertIndex = Index + 1;
+
+            FString Name;
+            FString ExistingValue;
+            if (TryParseCVarLine(Lines[Index], Name, ExistingValue) && Name.Equals(CVar, ESearchCase::IgnoreCase))
+            {
+                Lines[Index] = NewLine;
+                IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
+                const FString Output = FString::Join(Lines, LINE_TERMINATOR) + LINE_TERMINATOR;
+                if (!FFileHelper::SaveStringToFile(Output, *Filename))
+                {
+                    OutError = FString::Printf(TEXT("Failed to write config file: %s"), *Filename);
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        if (!bFoundSection)
+        {
+            if (Lines.Num() > 0 && !Lines.Last().IsEmpty())
+            {
+                Lines.Add(FString());
+            }
+            Lines.Add(FString::Printf(TEXT("[%s]"), *Section));
+            Lines.Add(NewLine);
+        }
+        else
+        {
+            Lines.Insert(NewLine, InsertIndex);
+        }
+
+        IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
+        const FString Output = FString::Join(Lines, LINE_TERMINATOR) + LINE_TERMINATOR;
+        if (!FFileHelper::SaveStringToFile(Output, *Filename))
+        {
+            OutError = FString::Printf(TEXT("Failed to write config file: %s"), *Filename);
+            return false;
+        }
+        return true;
+    }
+
     TSharedPtr<FJsonObject> MakeConfigAction(
         const FString& File,
         const FString& Section,
@@ -339,7 +541,9 @@ namespace
         const FString& To,
         const FString& Reason,
         const FString& Risk,
-        const TArray<FString>& Targets)
+        const TArray<FString>& Targets,
+        bool bAutoApply = true,
+        bool bRequiresVisualReview = false)
     {
         TSharedPtr<FJsonObject> Action = ABTJson::Object();
         Action->SetStringField(TEXT("op"), TEXT("set_config_value"));
@@ -351,8 +555,36 @@ namespace
         Action->SetStringField(TEXT("to"), To);
         Action->SetStringField(TEXT("reason"), Reason);
         Action->SetStringField(TEXT("risk"), Risk);
-        Action->SetBoolField(TEXT("auto_apply"), true);
-        Action->SetBoolField(TEXT("requires_visual_review"), false);
+        Action->SetBoolField(TEXT("auto_apply"), bAutoApply);
+        Action->SetBoolField(TEXT("requires_visual_review"), bRequiresVisualReview);
+        Action->SetArrayField(TEXT("targets"), StringArrayToJson(Targets));
+        return Action;
+    }
+
+    TSharedPtr<FJsonObject> MakeDeviceProfileCVarAction(
+        const FString& File,
+        const FString& Section,
+        const FString& CVar,
+        const FString& To,
+        const FString& Reason,
+        const FString& Risk,
+        const TArray<FString>& Targets,
+        bool bAutoApply = true,
+        bool bRequiresVisualReview = false)
+    {
+        TSharedPtr<FJsonObject> Action = ABTJson::Object();
+        Action->SetStringField(TEXT("op"), TEXT("set_device_profile_cvar"));
+        Action->SetStringField(TEXT("category"), TEXT("project_setting"));
+        Action->SetStringField(TEXT("file"), File);
+        Action->SetStringField(TEXT("section"), Section);
+        Action->SetStringField(TEXT("key"), TEXT("+CVars"));
+        Action->SetStringField(TEXT("cvar"), CVar);
+        Action->SetStringField(TEXT("from"), GetDeviceProfileCVarValue(File, Section, CVar));
+        Action->SetStringField(TEXT("to"), To);
+        Action->SetStringField(TEXT("reason"), Reason);
+        Action->SetStringField(TEXT("risk"), Risk);
+        Action->SetBoolField(TEXT("auto_apply"), bAutoApply);
+        Action->SetBoolField(TEXT("requires_visual_review"), bRequiresVisualReview);
         Action->SetArrayField(TEXT("targets"), StringArrayToJson(Targets));
         return Action;
     }
@@ -366,7 +598,9 @@ namespace
         const FString& To,
         const FString& Reason,
         const FString& Risk,
-        const TArray<FString>& Targets)
+        const TArray<FString>& Targets,
+        bool bAutoApply = true,
+        bool bRequiresVisualReview = false)
     {
         const FString DedupKey = File + TEXT("|") + Section + TEXT("|") + Key;
         if (SeenKeys.Contains(DedupKey))
@@ -381,7 +615,36 @@ namespace
             return;
         }
 
-        Plan.Add(ABTJson::ObjectValue(MakeConfigAction(File, Section, Key, To, Reason, Risk, Targets)));
+        Plan.Add(ABTJson::ObjectValue(MakeConfigAction(File, Section, Key, To, Reason, Risk, Targets, bAutoApply, bRequiresVisualReview)));
+    }
+
+    void AddDeviceProfileCVarActionIfChanged(
+        TArray<TSharedPtr<FJsonValue>>& Plan,
+        TSet<FString>& SeenKeys,
+        const FString& File,
+        const FString& Section,
+        const FString& CVar,
+        const FString& To,
+        const FString& Reason,
+        const FString& Risk,
+        const TArray<FString>& Targets,
+        bool bAutoApply = true,
+        bool bRequiresVisualReview = false)
+    {
+        const FString DedupKey = File + TEXT("|") + Section + TEXT("|+CVars|") + CVar;
+        if (SeenKeys.Contains(DedupKey))
+        {
+            return;
+        }
+        SeenKeys.Add(DedupKey);
+
+        const FString Current = GetDeviceProfileCVarValue(File, Section, CVar);
+        if (Current.Equals(To, ESearchCase::IgnoreCase))
+        {
+            return;
+        }
+
+        Plan.Add(ABTJson::ObjectValue(MakeDeviceProfileCVarAction(File, Section, CVar, To, Reason, Risk, Targets, bAutoApply, bRequiresVisualReview)));
     }
 
     void AddProjectSettingActions(
@@ -433,13 +696,33 @@ namespace
         if (Targets.bAndroid)
         {
             const TArray<FString> AndroidTargets = { TEXT("Android") };
-            AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.MobileHDR"), TEXT("False"), TEXT("Disable mobile HDR for Android to reduce bandwidth and post cost."), TEXT("medium"), AndroidTargets);
+            const FString DeviceProfileFile = ConfigFilePath(TEXT("DefaultDeviceProfiles.ini"));
+            const FString AndroidDeviceProfileSection = TEXT("Android DeviceProfile");
+
+            AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.TextureStreaming"), TEXT("True"), TEXT("Enable texture streaming so Android GPU memory is managed by the streamer."), TEXT("medium"), AndroidTargets);
+            AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.ReflectionCaptureResolution"), TEXT("512"), TEXT("Reduce reflection capture cubemap size for lower Android GPU memory and sampling cost."), TEXT("medium"), AndroidTargets);
+            AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.Mobile.FSR.Enabled"), TEXT("1"), TEXT("Enable mobile FSR so Android can recover image quality when rendering below native resolution."), TEXT("low"), AndroidTargets);
+            AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.MobileHDR"), TEXT("False"), TEXT("Disable mobile HDR for Android to reduce bandwidth and post cost."), TEXT("high"), AndroidTargets, true, true);
             AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.GenerateMeshDistanceFields"), TEXT("False"), TEXT("Disable mesh distance fields for Android performance profile."), TEXT("medium"), AndroidTargets);
             AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.DynamicGlobalIlluminationMethod"), TEXT("0"), TEXT("Disable heavyweight dynamic GI for Android profile."), TEXT("medium"), AndroidTargets);
-            AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.ReflectionMethod"), TEXT("0"), TEXT("Disable heavyweight dynamic reflections for Android profile."), TEXT("medium"), AndroidTargets);
+            AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.ReflectionMethod"), TEXT("0"), TEXT("Disable heavyweight dynamic reflections for Android profile."), TEXT("high"), AndroidTargets, true, true);
             AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/Engine.RendererSettings"), TEXT("r.Shadow.Virtual.Enable"), TEXT("0"), TEXT("Disable virtual shadow maps for Android profile."), TEXT("medium"), AndroidTargets);
             AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/HardwareTargeting.HardwareTargetingSettings"), TEXT("TargetedHardwareClass"), TEXT("Mobile"), TEXT("Set project hardware targeting toward mobile when optimizing for Android."), TEXT("medium"), AndroidTargets);
             AddConfigActionIfChanged(Plan, SeenKeys, EngineFile, TEXT("/Script/HardwareTargeting.HardwareTargetingSettings"), TEXT("DefaultGraphicsPerformance"), TEXT("Scalable"), TEXT("Use scalable defaults for Android-targeted builds."), TEXT("medium"), AndroidTargets);
+
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.Mobile.FSR.Enabled"), TEXT("1"), TEXT("Keep Android runtime aligned with project-level mobile FSR."), TEXT("low"), AndroidTargets);
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.ScreenPercentage"), TEXT("75"), TEXT("Render Android Vulkan at a controlled internal resolution and upscale with mobile FSR."), TEXT("medium"), AndroidTargets);
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.Tonemapper.Quality"), TEXT("0"), TEXT("Use the cheapest tonemapper path for Android mobile rendering."), TEXT("medium"), AndroidTargets);
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.EyeAdaptationQuality"), TEXT("0"), TEXT("Disable eye adaptation passes on Android."), TEXT("low"), AndroidTargets);
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.MotionBlurQuality"), TEXT("0"), TEXT("Disable motion blur passes on Android."), TEXT("low"), AndroidTargets);
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.AmbientOcclusionLevels"), TEXT("0"), TEXT("Disable ambient occlusion passes on Android."), TEXT("low"), AndroidTargets);
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.SceneColorFringeQuality"), TEXT("0"), TEXT("Disable chromatic aberration on Android."), TEXT("low"), AndroidTargets);
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.TranslucencyVolumeBlur"), TEXT("0"), TEXT("Disable translucency volume blur on Android."), TEXT("low"), AndroidTargets);
+
+            if (bAggressive)
+            {
+                AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.Vulkan.RobustBufferAccess"), TEXT("0"), TEXT("Disable Vulkan robust buffer access in mobile/aggressive profiles to reduce driver-side bounds checking cost."), TEXT("medium"), AndroidTargets);
+            }
         }
 
         if (Targets.HasDesktop() && bAggressive)
@@ -487,6 +770,69 @@ namespace
             OutAssets.SetNum(MaxAssets);
         }
         return true;
+    }
+
+    bool IsSupportedPerformanceAsset(UObject* Asset)
+    {
+        return Cast<UTexture2D>(Asset) ||
+            Cast<UMaterial>(Asset) ||
+            Cast<UMaterialInstanceConstant>(Asset) ||
+            Cast<UStaticMesh>(Asset) ||
+            Cast<USkeletalMesh>(Asset);
+    }
+
+    bool CollectExactAssets(
+        const TArray<FString>& AssetPaths,
+        int32 MaxAssets,
+        TArray<FAssetData>& OutAssets,
+        FString& OutError)
+    {
+        for (const FString& AssetPath : AssetPaths)
+        {
+            if (OutAssets.Num() >= MaxAssets)
+            {
+                break;
+            }
+
+            UObject* Asset = LoadObject<UObject>(nullptr, *AssetPath);
+            if (!Asset && !AssetPath.Contains(TEXT(".")))
+            {
+                const FString ObjectPath = AssetPath + TEXT(".") + FPackageName::GetShortName(AssetPath);
+                Asset = LoadObject<UObject>(nullptr, *ObjectPath);
+            }
+
+            if (!Asset)
+            {
+                OutError = FString::Printf(TEXT("Could not load assetPath: %s"), *AssetPath);
+                return false;
+            }
+
+            if (!IsSupportedPerformanceAsset(Asset))
+            {
+                OutError = FString::Printf(TEXT("Unsupported performance asset type for %s: %s"), *AssetPath, *Asset->GetClass()->GetPathName());
+                return false;
+            }
+
+            OutAssets.Add(FAssetData(Asset));
+        }
+        return true;
+    }
+
+    void DeduplicateAssets(TArray<FAssetData>& Assets)
+    {
+        TSet<FString> Seen;
+        TArray<FAssetData> Unique;
+        for (const FAssetData& Asset : Assets)
+        {
+            const FString Key = Asset.GetObjectPathString();
+            if (Key.IsEmpty() || Seen.Contains(Key))
+            {
+                continue;
+            }
+            Seen.Add(Key);
+            Unique.Add(Asset);
+        }
+        Assets = MoveTemp(Unique);
     }
 
     void AnalyzeTexture(
@@ -704,7 +1050,7 @@ namespace
                 TEXT("warning"),
                 TEXT("material"),
                 AssetPath,
-                FString::Printf(TEXT("Android target uses expensive blend mode: %s."), *BlendModeToString(Material->BlendMode)),
+                FString::Printf(TEXT("Android target uses expensive blend mode: %s."), *PerformanceBlendModeToString(Material->BlendMode)),
                 TEXT("Prefer Opaque or Masked materials on mobile where possible."),
                 { TEXT("Android") })));
         }
@@ -891,7 +1237,17 @@ namespace
         const bool bIncludeProjectSettings = ABTJson::GetBool(Request, TEXT("includeProjectSettings"), true);
         const int32 MaxAssets = ABTJson::GetInt(Request, TEXT("maxAssets"), 2000);
 
-        TArray<FString> ContentPaths = ParseContentPaths(Request, OutError);
+        const TArray<TSharedPtr<FJsonValue>>* RequestedAssetPathValues = nullptr;
+        const TArray<TSharedPtr<FJsonValue>>* RequestedContentPathValues = nullptr;
+        const bool bHasAssetPaths = Request.IsValid() && Request->TryGetArrayField(TEXT("assetPaths"), RequestedAssetPathValues);
+        const bool bHasContentPaths = Request.IsValid() && Request->TryGetArrayField(TEXT("contentPaths"), RequestedContentPathValues);
+        TArray<FString> AssetPaths = ParseAssetPaths(Request, OutError);
+        if (!OutError.IsEmpty())
+        {
+            return false;
+        }
+
+        TArray<FString> ContentPaths = ParseContentPaths(Request, OutError, !bHasAssetPaths || bHasContentPaths);
         if (!OutError.IsEmpty())
         {
             return false;
@@ -899,9 +1255,18 @@ namespace
 
         const FABTPerformanceThresholds Thresholds = GetThresholds(Targets, Profile, bAllowVisualChanges);
         TArray<FAssetData> AssetData;
-        if (!CollectAssets(ContentPaths, MaxAssets, AssetData, OutError))
+        if (ContentPaths.Num() > 0 && !CollectAssets(ContentPaths, MaxAssets, AssetData, OutError))
         {
             return false;
+        }
+        if (AssetPaths.Num() > 0 && !CollectExactAssets(AssetPaths, MaxAssets, AssetData, OutError))
+        {
+            return false;
+        }
+        DeduplicateAssets(AssetData);
+        if (AssetData.Num() > MaxAssets)
+        {
+            AssetData.SetNum(MaxAssets);
         }
 
         FABTPerformanceStats Stats;
@@ -968,6 +1333,7 @@ namespace
         OutJson->SetStringField(TEXT("profile"), Profile);
         OutJson->SetArrayField(TEXT("targets"), StringArrayToJson(Targets.Names));
         OutJson->SetArrayField(TEXT("content_paths"), StringArrayToJson(ContentPaths));
+        OutJson->SetArrayField(TEXT("asset_paths"), StringArrayToJson(AssetPaths));
 
         TSharedPtr<FJsonObject> ThresholdJson = ABTJson::Object();
         ThresholdJson->SetNumberField(TEXT("max_texture_size"), Thresholds.MaxTextureSize);
@@ -1023,7 +1389,7 @@ namespace
         }
         else if (Op == TEXT("disable_texture_virtual_streaming"))
         {
-            Texture->SetVirtualTextureStreaming(false);
+            Texture->VirtualTextureStreaming = false;
         }
         else if (Op == TEXT("set_mask_texture_settings"))
         {
@@ -1090,12 +1456,29 @@ namespace
 
     bool ApplyConfigAction(const TSharedPtr<FJsonObject>& Action, TArray<TSharedPtr<FJsonValue>>& Applied, FString& OutError)
     {
-        if (!WriteConfigValue(
-            ABTJson::GetString(Action, TEXT("file")),
-            ABTJson::GetString(Action, TEXT("section")),
-            ABTJson::GetString(Action, TEXT("key")),
-            ABTJson::GetString(Action, TEXT("to")),
-            OutError))
+        const FString Op = ABTJson::GetString(Action, TEXT("op"));
+        bool bWrote = false;
+
+        if (Op == TEXT("set_device_profile_cvar"))
+        {
+            bWrote = WriteDeviceProfileCVarValue(
+                ABTJson::GetString(Action, TEXT("file")),
+                ABTJson::GetString(Action, TEXT("section")),
+                ABTJson::GetString(Action, TEXT("cvar")),
+                ABTJson::GetString(Action, TEXT("to")),
+                OutError);
+        }
+        else
+        {
+            bWrote = WriteConfigValue(
+                ABTJson::GetString(Action, TEXT("file")),
+                ABTJson::GetString(Action, TEXT("section")),
+                ABTJson::GetString(Action, TEXT("key")),
+                ABTJson::GetString(Action, TEXT("to")),
+                OutError);
+        }
+
+        if (!bWrote)
         {
             return false;
         }

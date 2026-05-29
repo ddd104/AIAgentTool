@@ -19,6 +19,7 @@ namespace ABT::Blueprint
     UEdGraphPin* FindPinByName(UEdGraphNode* Node, const FString& PinName);
     bool ParseNodePinRef(const FString& Ref, FString& OutNodeId, FString& OutPinName);
     UEdGraphNode* FindExistingNodeByGuidOrName(UEdGraph* Graph, const FString& Id);
+    UEdGraphNode* FindExistingNodeInBlueprint(UBlueprint* Blueprint, const FString& GraphName, const FString& Id);
     UEdGraphPin* FindFirstPin(UEdGraphNode* Node, EEdGraphPinDirection Direction, const FName& Category);
     UEdGraphPin* FindVectorInputPin(UEdGraphNode* Node);
 

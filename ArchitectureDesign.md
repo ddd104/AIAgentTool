@@ -76,7 +76,8 @@ ZIP 中的仓库已经按“可直接放进 UE 工程”的形式组织好了，
 | `.../Blueprint/ABTBlueprintTools.*` | Blueprint IR / dry-run / apply / compile |
 | `.../Materials/ABTMaterialTools.*` | 材质读取与 patch |
 | `.../Assets/ABTAssetTools.*` | 资产加载、创建、保存、属性设置 |
-| `skills/ue5-blueprint-agent/SKILL.md` | Codex 技能提示词 |
+| `.agents/skills/ue5-blueprint-agent/SKILL.md` | 项目级 Codex Skill 自动加载入口 |
+| `skills/ue5-blueprint-agent/SKILL.md` | 可分发的 Codex Skill 副本 |
 | `.codex/config.toml` | 项目级 Codex/MCP 配置 |
 | `examples/patches/*.yaml` | 最小可执行 Patch 示例 |
 | `.../Tests/ABTAutomationTests.cpp` | Phase 1/2 自动化测试骨架 |
@@ -85,7 +86,7 @@ ZIP 中的仓库已经按“可直接放进 UE 工程”的形式组织好了，
 
 ### MCP server
 
-官方 TypeScript/Node SDK 当前建议用 `@modelcontextprotocol/server` 创建 server，并通过 `StdioServerTransport` 连接到本地进程，同时用 schema 注册 tools；Codex 也支持把这种本地 stdio server 作为 `[mcp_servers.<id>]` 接入。
+官方 TypeScript/Node SDK 当前建议用 `@modelcontextprotocol/sdk` 创建 server，并通过 `StdioServerTransport` 连接到本地进程，同时用 schema 注册 tools；Codex 也支持把这种本地 stdio server 作为 `[mcp_servers.<id>]` 接入。
 
 `mcp-server/package.json`
 
@@ -101,7 +102,7 @@ ZIP 中的仓库已经按“可直接放进 UE 工程”的形式组织好了，
     "inspect": "npx @modelcontextprotocol/inspector node server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "js-yaml": "^4.1.0",
     "zod": "^4.0.0"
   }
@@ -111,8 +112,8 @@ ZIP 中的仓库已经按“可直接放进 UE 工程”的形式组织好了，
 `mcp-server/server.js`
 
 ```js
-import { McpServer } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import yaml from "js-yaml";
 import z from "zod/v4";
 
@@ -427,7 +428,7 @@ if (!UEditorAssetLibrary::SaveLoadedAsset(Object, false))
 
 Codex Skills 官方格式要求目录中至少有一个 `SKILL.md`，而 `AGENTS.md` 则会在全局与项目路径上按层级自动加载。最好的做法是：把“先读 IR、再 dry-run”的行为写进 skill 与项目规则，而不是每次都重新 prompt。
 
-`skills/ue5-blueprint-agent/SKILL.md`
+`.agents/skills/ue5-blueprint-agent/SKILL.md`（`skills/ue5-blueprint-agent/SKILL.md` 保留同内容副本，便于分发）
 
 ```md
 ---

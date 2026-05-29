@@ -1,5 +1,5 @@
-import { McpServer } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import yaml from "js-yaml";
 
@@ -50,8 +50,10 @@ function textResult(value) {
   };
 }
 
+const patchSchema = z.union([z.string(), z.record(z.string(), z.any())]);
+
 const server = new McpServer({
-  name: "ue5-agent-blueprint-tools",
+  name: "ue5-agent-blueprint-tools-mcp",
   version: "0.1.0"
 });
 
@@ -83,7 +85,7 @@ server.registerTool(
 server.registerTool(
   "analyze_blueprint_graph",
   {
-    description: "Analyze a Blueprint graph and return entry points, execution paths, variable reads/writes, and external calls.",
+    description: "Analyze a Blueprint graph and return semantic IR: entry points, execution paths, variable reads/writes, component touches, external calls, and raw graph IR.",
     inputSchema: z.object({
       assetPath: z.string(),
       graphName: z.string().optional().default("")
@@ -107,8 +109,8 @@ server.registerTool(
 server.registerTool(
   "dry_run_blueprint_patch",
   {
-    description: "Validate a Blueprint Patch DSL document without modifying assets.",
-    inputSchema: z.object({ patch: z.union([z.string(), z.record(z.any())]) })
+    description: "Validate a Blueprint Patch DSL document without modifying assets. Supports refs to new ids or existing node GUID/object/title, plus remove_node and set_blueprint_property.",
+    inputSchema: z.object({ patch: patchSchema })
   },
   async ({ patch }) => textResult(await callBridge("/v1/blueprint/patch/dry-run", { patch: normalizePatch(patch) }))
 );
@@ -118,7 +120,7 @@ server.registerTool(
   {
     description: "Apply a Blueprint Patch DSL document. The UE plugin compiles and rolls back on failure.",
     inputSchema: z.object({
-      patch: z.union([z.string(), z.record(z.any())]),
+      patch: patchSchema,
       saveOnSuccess: z.boolean().optional().default(false)
     })
   },
@@ -140,7 +142,7 @@ server.registerTool(
 server.registerTool(
   "read_material",
   {
-    description: "Read a material or material instance summary.",
+    description: "Read a material or material instance summary, including material outputs, expression inputs/outputs, key parameters, texture samples, function calls, reachability counts, and performance-relevant settings.",
     inputSchema: z.object({ assetPath: z.string() })
   },
   async ({ assetPath }) => textResult(await callBridge("/v1/material/read", { assetPath }))
@@ -149,9 +151,9 @@ server.registerTool(
 server.registerTool(
   "patch_material",
   {
-    description: "Apply a Material Patch DSL document for expressions, material properties, material instance parameters, and templates like make_flash_surface.",
+    description: "Apply a Material Patch DSL document for expressions, existing-node connects, set_expression_property, replace_expression_references, delete_expression, material settings, translucent performance toggles, repair_expression_collection, material instance parameters, and templates like make_flash_surface.",
     inputSchema: z.object({
-      patch: z.union([z.string(), z.record(z.any())]),
+      patch: patchSchema,
       saveOnSuccess: z.boolean().optional().default(false)
     })
   },
@@ -164,7 +166,8 @@ server.registerTool(
 const performanceOptionsSchema = z.object({
   targetPlatforms: z.array(z.enum(["Android", "Windows", "Linux"])).optional().default(["Android", "Windows", "Linux"]),
   profile: z.enum(["balanced", "aggressive", "mobile", "desktop"]).optional().default("balanced"),
-  contentPaths: z.array(z.string()).optional().default(["/Game"]),
+  contentPaths: z.array(z.string()).optional(),
+  assetPaths: z.array(z.string()).optional(),
   maxAssets: z.number().int().min(1).max(20000).optional().default(2000),
   includeAssets: z.boolean().optional().default(true),
   includeMaterials: z.boolean().optional().default(true),

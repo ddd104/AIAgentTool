@@ -6,6 +6,11 @@
 void FAgentBlueprintToolsModule::StartupModule()
 {
 #if WITH_EDITOR
+    if (IsRunningCommandlet())
+    {
+        return;
+    }
+
     BridgeServer = MakeUnique<FABTLocalBridgeServer>();
     BridgeServer->Start();
 #endif

@@ -5,8 +5,11 @@
 #include "Animation/MovieScene2DTransformTrack.h"
 #include "Animation/WidgetAnimation.h"
 #include "Animation/WidgetAnimationBinding.h"
+#include "Blueprint/Utils/ABTBlueprintGraphUtils.h"
+#include "BlueprintEditorLibrary.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
+#include "Components/BorderSlot.h"
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
@@ -28,7 +31,16 @@
 #include "Engine/Blueprint.h"
 #include "Engine/Texture2D.h"
 #include "Fonts/SlateFontInfo.h"
+#include "K2Node_AsyncAction.h"
+#include "K2Node_BreakStruct.h"
+#include "K2Node_CallFunction.h"
+#include "K2Node_Event.h"
+#include "K2Node_IfThenElse.h"
+#include "K2Node_VariableGet.h"
+#include "K2Node_VariableSet.h"
+#include "Kismet/KismetTextLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Modules/ModuleManager.h"
 #include "Misc/Paths.h"
 #include "MovieScene.h"
 #include "Sections/MovieSceneEventTriggerSection.h"
@@ -254,14 +266,49 @@ namespace
             return;
         }
 
-        TArray<UWidget*> AllWidgets;
-        WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
-        for (const UWidget* Widget : AllWidgets)
+        TSet<FName> LiveVariableNames;
+        WidgetBlueprint->ForEachSourceWidget([WidgetBlueprint, &LiveVariableNames](UWidget* Widget)
         {
-            if (Widget && !WidgetBlueprint->WidgetVariableNameToGuidMap.Contains(Widget->GetFName()))
+            if (!Widget)
             {
-                WidgetBlueprint->OnVariableAdded(Widget->GetFName());
+                return;
             }
+
+            const FName WidgetName = Widget->GetFName();
+            LiveVariableNames.Add(WidgetName);
+            if (!WidgetBlueprint->WidgetVariableNameToGuidMap.Contains(WidgetName))
+            {
+                WidgetBlueprint->OnVariableAdded(WidgetName);
+            }
+        });
+
+        for (UWidgetAnimation* Animation : WidgetBlueprint->Animations)
+        {
+            if (!Animation)
+            {
+                continue;
+            }
+
+            const FName AnimationName = Animation->GetFName();
+            LiveVariableNames.Add(AnimationName);
+            if (!WidgetBlueprint->WidgetVariableNameToGuidMap.Contains(AnimationName))
+            {
+                WidgetBlueprint->OnVariableAdded(AnimationName);
+            }
+        }
+
+        TArray<FName> StaleVariableNames;
+        for (const TPair<FName, FGuid>& Entry : WidgetBlueprint->WidgetVariableNameToGuidMap)
+        {
+            if (!LiveVariableNames.Contains(Entry.Key))
+            {
+                StaleVariableNames.Add(Entry.Key);
+            }
+        }
+
+        for (const FName& StaleName : StaleVariableNames)
+        {
+            WidgetBlueprint->OnVariableRemoved(StaleName);
         }
     }
 
@@ -929,6 +976,240 @@ namespace
 
         return true;
     }
+
+    UScriptStruct* LoadScriptStructFromPath(const FString& RawPath)
+    {
+        if (RawPath.IsEmpty())
+        {
+            return nullptr;
+        }
+
+        if (UScriptStruct* Struct = LoadObject<UScriptStruct>(nullptr, *RawPath))
+        {
+            return Struct;
+        }
+
+        if (!RawPath.StartsWith(TEXT("/Script/")))
+        {
+            return LoadObject<UScriptStruct>(nullptr, *FString::Printf(TEXT("/Script/%s"), *RawPath));
+        }
+
+        return nullptr;
+    }
+
+    UTexture2D* RequireTexture(const TSharedPtr<FJsonObject>& Op, const FString& Field, FString& OutError)
+    {
+        const FString TexturePath = ABTJson::GetString(Op, Field);
+        UTexture2D* Texture = LoadTextureFromPath(TexturePath);
+        if (!Texture)
+        {
+            OutError = FString::Printf(TEXT("Texture not found for %s: %s"), *Field, *TexturePath);
+        }
+        return Texture;
+    }
+
+    UFunction* RequireFunction(UClass* OwnerClass, const FName FunctionName, FString& OutError)
+    {
+        UFunction* Function = OwnerClass ? OwnerClass->FindFunctionByName(FunctionName) : nullptr;
+        if (!Function)
+        {
+            OutError = FString::Printf(TEXT("Function not found: %s.%s"), OwnerClass ? *OwnerClass->GetName() : TEXT("<null>"), *FunctionName.ToString());
+        }
+        return Function;
+    }
+
+    template <typename TNode>
+    TNode* AddTypedNode(UEdGraph* Graph, const int32 X, const int32 Y)
+    {
+        TNode* Node = NewObject<TNode>(Graph);
+        Graph->AddNode(Node, true, false);
+        Node->CreateNewGuid();
+        Node->NodePosX = X;
+        Node->NodePosY = Y;
+        return Node;
+    }
+
+    UK2Node_CallFunction* AddCallFunctionNode(UEdGraph* Graph, UFunction* Function, const int32 X, const int32 Y)
+    {
+        if (!Graph || !Function)
+        {
+            return nullptr;
+        }
+
+        UK2Node_CallFunction* Node = AddTypedNode<UK2Node_CallFunction>(Graph, X, Y);
+        Node->SetFromFunction(Function);
+        Node->AllocateDefaultPins();
+        return Node;
+    }
+
+    UK2Node_VariableGet* AddVariableGetNode(UEdGraph* Graph, const FName VariableName, const int32 X, const int32 Y)
+    {
+        UK2Node_VariableGet* Node = AddTypedNode<UK2Node_VariableGet>(Graph, X, Y);
+        Node->VariableReference.SetSelfMember(VariableName);
+        Node->AllocateDefaultPins();
+        return Node;
+    }
+
+    UK2Node_VariableSet* AddVariableSetNode(UEdGraph* Graph, const FName VariableName, const int32 X, const int32 Y)
+    {
+        UK2Node_VariableSet* Node = AddTypedNode<UK2Node_VariableSet>(Graph, X, Y);
+        Node->VariableReference.SetSelfMember(VariableName);
+        Node->AllocateDefaultPins();
+        return Node;
+    }
+
+    UK2Node_Event* AddWidgetEventNode(UEdGraph* Graph, const FName EventName, const int32 X, const int32 Y)
+    {
+        UK2Node_Event* Node = AddTypedNode<UK2Node_Event>(Graph, X, Y);
+        Node->EventReference.SetExternalMember(EventName, UUserWidget::StaticClass());
+        Node->bOverrideFunction = true;
+        Node->AllocateDefaultPins();
+        return Node;
+    }
+
+    bool ConnectNodePins(UEdGraphNode* FromNode, const FString& FromPinName, UEdGraphNode* ToNode, const FString& ToPinName, FString& OutError)
+    {
+        UEdGraphPin* FromPin = ABT::Blueprint::FindPinByName(FromNode, FromPinName);
+        UEdGraphPin* ToPin = ABT::Blueprint::FindPinByName(ToNode, ToPinName);
+        if (!FromPin || !ToPin)
+        {
+            OutError = FString::Printf(TEXT("Pin not found while connecting %s.%s -> %s.%s"),
+                FromNode ? *FromNode->GetName() : TEXT("<null>"),
+                *FromPinName,
+                ToNode ? *ToNode->GetName() : TEXT("<null>"),
+                *ToPinName);
+            return false;
+        }
+
+        const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+        if (!Schema->TryCreateConnection(FromPin, ToPin))
+        {
+            OutError = FString::Printf(TEXT("Could not connect %s.%s -> %s.%s"),
+                *FromNode->GetName(), *FromPinName, *ToNode->GetName(), *ToPinName);
+            return false;
+        }
+        return true;
+    }
+
+    bool SetObjectPinDefault(UEdGraphNode* Node, const FString& PinName, UObject* Object, FString& OutError)
+    {
+        UEdGraphPin* Pin = ABT::Blueprint::FindPinByName(Node, PinName);
+        if (!Pin)
+        {
+            OutError = FString::Printf(TEXT("Pin not found: %s.%s"), Node ? *Node->GetName() : TEXT("<null>"), *PinName);
+            return false;
+        }
+
+        const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+        Schema->TrySetDefaultObject(*Pin, Object, false);
+        return true;
+    }
+
+    bool EnsureAsyncActionVariable(UBlueprint* Blueprint, const FName VariableName, UClass* AsyncActionClass, TArray<FString>& OutMessages)
+    {
+        if (!Blueprint || !AsyncActionClass)
+        {
+            return false;
+        }
+
+        for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
+        {
+            if (Variable.VarName == VariableName)
+            {
+                return true;
+            }
+        }
+
+        FEdGraphPinType PinType;
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+        PinType.PinSubCategoryObject = AsyncActionClass;
+        FBlueprintEditorUtils::AddMemberVariable(Blueprint, VariableName, PinType);
+        OutMessages.Add(FString::Printf(TEXT("Added async action variable %s"), *VariableName.ToString()));
+        return true;
+    }
+
+    UK2Node_AsyncAction* AddListenForGameplayMessagesNode(UEdGraph* Graph, UScriptStruct* PayloadStruct, const FString& Channel, const int32 X, const int32 Y, FString& OutError)
+    {
+        if (!FModuleManager::Get().IsModuleLoaded(TEXT("GameplayMessageNodes")))
+        {
+            FModuleManager::Get().LoadModule(TEXT("GameplayMessageNodes"));
+        }
+
+        UClass* AsyncNodeClass = LoadClass<UEdGraphNode>(nullptr, TEXT("/Script/GameplayMessageNodes.K2Node_AsyncAction_ListenForGameplayMessages"));
+        UClass* AsyncActionClass = LoadObject<UClass>(nullptr, TEXT("/Script/GameplayMessageRuntime.AsyncAction_ListenForGameplayMessage"));
+        if (!AsyncNodeClass || !AsyncNodeClass->IsChildOf(UK2Node_AsyncAction::StaticClass()))
+        {
+            OutError = TEXT("Could not load K2Node_AsyncAction_ListenForGameplayMessages");
+            return nullptr;
+        }
+        if (!AsyncActionClass)
+        {
+            OutError = TEXT("Could not load AsyncAction_ListenForGameplayMessage");
+            return nullptr;
+        }
+
+        UFunction* ListenFunction = AsyncActionClass->FindFunctionByName(TEXT("ListenForGameplayMessages"));
+        if (!ListenFunction)
+        {
+            OutError = TEXT("Could not find ListenForGameplayMessages function");
+            return nullptr;
+        }
+
+        UK2Node_AsyncAction* Node = NewObject<UK2Node_AsyncAction>(Graph, AsyncNodeClass);
+        Node->InitializeProxyFromFunction(ListenFunction);
+        Graph->AddNode(Node, true, false);
+        Node->CreateNewGuid();
+        Node->NodePosX = X;
+        Node->NodePosY = Y;
+        Node->AllocateDefaultPins();
+
+        if (UEdGraphPin* ChannelPin = ABT::Blueprint::FindPinByName(Node, TEXT("Channel")))
+        {
+            ChannelPin->DefaultValue = FString::Printf(TEXT("(TagName=\"%s\")"), *Channel);
+        }
+
+        if (UEdGraphPin* PayloadTypePin = ABT::Blueprint::FindPinByName(Node, TEXT("PayloadType")))
+        {
+            PayloadTypePin->DefaultObject = PayloadStruct;
+            Node->PinDefaultValueChanged(PayloadTypePin);
+        }
+
+        return Node;
+    }
+
+    bool ClearGraphNodes(UBlueprint* Blueprint, UEdGraph* Graph)
+    {
+        if (!Blueprint || !Graph)
+        {
+            return false;
+        }
+
+        TArray<UEdGraphNode*> Nodes = Graph->Nodes;
+        for (UEdGraphNode* Node : Nodes)
+        {
+            if (Node)
+            {
+                FBlueprintEditorUtils::RemoveNode(Blueprint, Node, true);
+            }
+        }
+        return true;
+    }
+
+    UEdGraph* EnsureEventGraph(UBlueprint* Blueprint)
+    {
+        if (UEdGraph* Graph = ABT::Blueprint::FindGraph(Blueprint, TEXT("EventGraph")))
+        {
+            return Graph;
+        }
+
+        UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
+            Blueprint,
+            TEXT("EventGraph"),
+            UEdGraph::StaticClass(),
+            UEdGraphSchema_K2::StaticClass());
+        FBlueprintEditorUtils::AddUbergraphPage(Blueprint, NewGraph);
+        return NewGraph;
+    }
 }
 
 namespace ABT::Blueprint::Ops
@@ -1108,6 +1389,230 @@ namespace ABT::Blueprint::Ops
         TArray<UWidget*> AllWidgets;
         Tree->GetAllWidgets(AllWidgets);
         OutMessages.Add(FString::Printf(TEXT("Configured figma widget tree with %d widgets"), AllWidgets.Num()));
+        return true;
+    }
+
+    bool ConfigureMessagePlateWidget(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError)
+    {
+        UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(Blueprint);
+        if (!WidgetBlueprint)
+        {
+            OutError = TEXT("configure_message_plate_widget requires a WidgetBlueprint target");
+            return false;
+        }
+
+        UClass* ParentClass = LoadWidgetClassFromPath(ABTJson::GetString(Op, TEXT("parentClass"), TEXT("/Script/UMG.UserWidget")));
+        if (!ParentClass || !ParentClass->IsChildOf(UUserWidget::StaticClass()))
+        {
+            OutError = TEXT("configure_message_plate_widget parentClass must derive from UserWidget");
+            return false;
+        }
+
+        if (WidgetBlueprint->ParentClass != ParentClass)
+        {
+            UBlueprintEditorLibrary::ReparentBlueprint(WidgetBlueprint, ParentClass);
+            OutMessages.Add(FString::Printf(TEXT("Reparented widget to %s"), *ParentClass->GetPathName()));
+        }
+
+        UScriptStruct* PayloadStruct = LoadScriptStructFromPath(ABTJson::GetString(Op, TEXT("payloadStruct")));
+        if (!PayloadStruct)
+        {
+            OutError = FString::Printf(TEXT("Payload struct not found: %s"), *ABTJson::GetString(Op, TEXT("payloadStruct")));
+            return false;
+        }
+
+        UTexture2D* TrueTexture = RequireTexture(Op, TEXT("trueTexture"), OutError);
+        if (!TrueTexture)
+        {
+            return false;
+        }
+
+        UTexture2D* FalseTexture = RequireTexture(Op, TEXT("falseTexture"), OutError);
+        if (!FalseTexture)
+        {
+            return false;
+        }
+
+        if (!WidgetBlueprint->WidgetTree)
+        {
+            WidgetBlueprint->WidgetTree = NewObject<UWidgetTree>(WidgetBlueprint, TEXT("WidgetTree"), RF_Transactional);
+        }
+
+        UWidgetTree* Tree = WidgetBlueprint->WidgetTree;
+        Tree->Modify();
+
+        const FName BorderName(*ABTJson::GetString(Op, TEXT("backgroundName"), TEXT("Border_BG")));
+        const FName TextName(*ABTJson::GetString(Op, TEXT("textName"), TEXT("LicensePlateText")));
+        const FName AnimationName(*ABTJson::GetString(Op, TEXT("animationName"), TEXT("Show")));
+        const FName ActionVariableName(*ABTJson::GetString(Op, TEXT("asyncActionVariable"), TEXT("LicensePlateMessageAction")));
+        const FString StringField = ABTJson::GetString(Op, TEXT("stringField"), TEXT("StringValue"));
+        const FString BoolField = ABTJson::GetString(Op, TEXT("boolField"), TEXT("BoolValue"));
+        const FString Channel = ABTJson::GetString(Op, TEXT("channel"));
+        const float AnimationDuration = static_cast<float>(ABTJson::GetNumber(Op, TEXT("duration"), 1.0));
+
+        UBorder* Border = Cast<UBorder>(Tree->FindWidget(BorderName));
+        if (!Border)
+        {
+            Border = Tree->ConstructWidget<UBorder>(UBorder::StaticClass(), BorderName);
+        }
+        UTextBlock* Text = Cast<UTextBlock>(Tree->FindWidget(TextName));
+        if (!Text)
+        {
+            Text = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TextName);
+        }
+
+        if (!Border || !Text)
+        {
+            OutError = TEXT("Failed to construct license plate widgets");
+            return false;
+        }
+
+        Border->bIsVariable = true;
+        Border->SetBrushFromTexture(FalseTexture);
+        Border->SetPadding(FMargin(0.0f));
+        Border->SetRenderOpacity(0.0f);
+        Border->SetContent(Text);
+
+        if (UBorderSlot* TextSlot = Cast<UBorderSlot>(Text->Slot))
+        {
+            TextSlot->SetHorizontalAlignment(HAlign_Center);
+            TextSlot->SetVerticalAlignment(VAlign_Center);
+        }
+
+        Text->bIsVariable = true;
+        Text->SetText(FText::GetEmpty());
+        Text->SetJustification(ETextJustify::Center);
+        FSlateFontInfo Font = Text->GetFont();
+        Font.Size = ABTJson::GetInt(Op, TEXT("fontSize"), 28);
+        Text->SetFont(Font);
+        FLinearColor TextColor;
+        if (TryReadColor(Op, TEXT("textColor"), TextColor) || TryReadColor(Op, TEXT("color"), TextColor))
+        {
+            Text->SetColorAndOpacity(FSlateColor(TextColor));
+        }
+        else
+        {
+            Text->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+        }
+
+        Tree->RootWidget = Border;
+
+        UWidgetAnimation* ShowAnimation = FindOrCreateWidgetAnimation(WidgetBlueprint, AnimationName, AnimationDuration);
+        if (!ShowAnimation || !ShowAnimation->MovieScene)
+        {
+            OutError = TEXT("Failed to create widget opacity animation");
+            return false;
+        }
+        const FFrameNumber EndFrame = FrameAtSeconds(ShowAnimation->MovieScene, FMath::Max(AnimationDuration, 0.01f));
+        const FGuid BorderBinding = ShowAnimation->MovieScene->AddPossessable(Border->GetName(), Border->GetClass());
+        BindWidgetToAnimation(ShowAnimation, Border, BorderBinding);
+        AddOpacityTrack(ShowAnimation->MovieScene, BorderBinding, 0.0f, EndFrame);
+        EnsureWidgetGuids(WidgetBlueprint);
+
+        UEdGraph* EventGraph = EnsureEventGraph(WidgetBlueprint);
+        if (!EventGraph)
+        {
+            OutError = TEXT("Failed to find or create EventGraph");
+            return false;
+        }
+        EventGraph->Modify();
+        ClearGraphNodes(WidgetBlueprint, EventGraph);
+
+        UClass* AsyncActionClass = LoadObject<UClass>(nullptr, TEXT("/Script/GameplayMessageRuntime.AsyncAction_ListenForGameplayMessage"));
+        if (!EnsureAsyncActionVariable(WidgetBlueprint, ActionVariableName, AsyncActionClass, OutMessages))
+        {
+            OutError = TEXT("Failed to ensure async action variable");
+            return false;
+        }
+
+        UK2Node_Event* ConstructEvent = AddWidgetEventNode(EventGraph, TEXT("Construct"), 0, 0);
+        UK2Node_Event* DestructEvent = AddWidgetEventNode(EventGraph, TEXT("Destruct"), 0, 420);
+        UK2Node_AsyncAction* ListenNode = AddListenForGameplayMessagesNode(EventGraph, PayloadStruct, Channel, 300, 0, OutError);
+        if (!ListenNode)
+        {
+            return false;
+        }
+
+        UK2Node_VariableSet* SetActionNode = AddVariableSetNode(EventGraph, ActionVariableName, 760, 80);
+        UK2Node_BreakStruct* BreakPayloadNode = AddTypedNode<UK2Node_BreakStruct>(EventGraph, 760, 300);
+        BreakPayloadNode->StructType = PayloadStruct;
+        BreakPayloadNode->AllocateDefaultPins();
+
+        UK2Node_VariableGet* GetTextNode = AddVariableGetNode(EventGraph, TextName, 980, 470);
+        UK2Node_CallFunction* StringToTextNode = AddCallFunctionNode(EventGraph, RequireFunction(UKismetTextLibrary::StaticClass(), TEXT("Conv_StringToText"), OutError), 980, 310);
+        if (!StringToTextNode)
+        {
+            return false;
+        }
+        UK2Node_CallFunction* SetTextNode = AddCallFunctionNode(EventGraph, RequireFunction(UTextBlock::StaticClass(), TEXT("SetText"), OutError), 1240, 240);
+        if (!SetTextNode)
+        {
+            return false;
+        }
+
+        UK2Node_IfThenElse* BranchNode = AddTypedNode<UK2Node_IfThenElse>(EventGraph, 1500, 240);
+        BranchNode->AllocateDefaultPins();
+
+        UK2Node_VariableGet* GetBorderForTrueNode = AddVariableGetNode(EventGraph, BorderName, 1700, 360);
+        UK2Node_CallFunction* SetTrueTextureNode = AddCallFunctionNode(EventGraph, RequireFunction(UBorder::StaticClass(), TEXT("SetBrushFromTexture"), OutError), 1900, 160);
+        if (!SetTrueTextureNode || !SetObjectPinDefault(SetTrueTextureNode, TEXT("Texture"), TrueTexture, OutError))
+        {
+            return false;
+        }
+        UK2Node_VariableGet* GetShowForTrueNode = AddVariableGetNode(EventGraph, AnimationName, 2140, 340);
+        UK2Node_CallFunction* PlayTrueAnimationNode = AddCallFunctionNode(EventGraph, RequireFunction(UUserWidget::StaticClass(), TEXT("PlayAnimation"), OutError), 2320, 160);
+        if (!PlayTrueAnimationNode)
+        {
+            return false;
+        }
+
+        UK2Node_VariableGet* GetBorderForFalseNode = AddVariableGetNode(EventGraph, BorderName, 1700, 720);
+        UK2Node_CallFunction* SetFalseTextureNode = AddCallFunctionNode(EventGraph, RequireFunction(UBorder::StaticClass(), TEXT("SetBrushFromTexture"), OutError), 1900, 520);
+        if (!SetFalseTextureNode || !SetObjectPinDefault(SetFalseTextureNode, TEXT("Texture"), FalseTexture, OutError))
+        {
+            return false;
+        }
+        UK2Node_VariableGet* GetShowForFalseNode = AddVariableGetNode(EventGraph, AnimationName, 2140, 700);
+        UK2Node_CallFunction* PlayFalseAnimationNode = AddCallFunctionNode(EventGraph, RequireFunction(UUserWidget::StaticClass(), TEXT("PlayAnimation"), OutError), 2320, 520);
+        if (!PlayFalseAnimationNode)
+        {
+            return false;
+        }
+
+        UK2Node_VariableGet* GetActionNode = AddVariableGetNode(EventGraph, ActionVariableName, 300, 640);
+        UK2Node_CallFunction* CancelNode = AddCallFunctionNode(EventGraph, RequireFunction(AsyncActionClass, TEXT("Cancel"), OutError), 560, 480);
+        if (!CancelNode)
+        {
+            return false;
+        }
+
+        if (!ConnectNodePins(ConstructEvent, TEXT("then"), ListenNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(ListenNode, TEXT("then"), SetActionNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(ListenNode, TEXT("AsyncTaskProxy"), SetActionNode, ActionVariableName.ToString(), OutError) ||
+            !ConnectNodePins(ListenNode, TEXT("Payload"), BreakPayloadNode, PayloadStruct->GetName(), OutError) ||
+            !ConnectNodePins(ListenNode, TEXT("OnMessageReceived"), SetTextNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(BreakPayloadNode, StringField, StringToTextNode, TEXT("InString"), OutError) ||
+            !ConnectNodePins(StringToTextNode, TEXT("ReturnValue"), SetTextNode, TEXT("InText"), OutError) ||
+            !ConnectNodePins(GetTextNode, TextName.ToString(), SetTextNode, TEXT("self"), OutError) ||
+            !ConnectNodePins(SetTextNode, TEXT("then"), BranchNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(BreakPayloadNode, BoolField, BranchNode, TEXT("Condition"), OutError) ||
+            !ConnectNodePins(BranchNode, TEXT("then"), SetTrueTextureNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(GetBorderForTrueNode, BorderName.ToString(), SetTrueTextureNode, TEXT("self"), OutError) ||
+            !ConnectNodePins(SetTrueTextureNode, TEXT("then"), PlayTrueAnimationNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(GetShowForTrueNode, AnimationName.ToString(), PlayTrueAnimationNode, TEXT("InAnimation"), OutError) ||
+            !ConnectNodePins(BranchNode, TEXT("else"), SetFalseTextureNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(GetBorderForFalseNode, BorderName.ToString(), SetFalseTextureNode, TEXT("self"), OutError) ||
+            !ConnectNodePins(SetFalseTextureNode, TEXT("then"), PlayFalseAnimationNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(GetShowForFalseNode, AnimationName.ToString(), PlayFalseAnimationNode, TEXT("InAnimation"), OutError) ||
+            !ConnectNodePins(DestructEvent, TEXT("then"), CancelNode, TEXT("execute"), OutError) ||
+            !ConnectNodePins(GetActionNode, ActionVariableName.ToString(), CancelNode, TEXT("self"), OutError))
+        {
+            return false;
+        }
+
+        EnsureWidgetGuids(WidgetBlueprint);
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+        OutMessages.Add(FString::Printf(TEXT("Configured message plate widget for %s with %s and 1 opacity animation"), *Channel, *PayloadStruct->GetName()));
         return true;
     }
 }

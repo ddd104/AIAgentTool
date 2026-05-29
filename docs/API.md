@@ -75,7 +75,7 @@ Scans textures, materials, material instances, static meshes, skeletal meshes, a
 
 ## POST /v1/performance/optimization/dry-run
 
-Builds a no-write optimization plan. The plan can include texture settings, material flags, and `Config/DefaultEngine.ini` project settings.
+Builds a no-write optimization plan. The plan can include texture settings, material flags, `Config/DefaultEngine.ini` project settings, and Android DeviceProfile CVars in `Config/DefaultDeviceProfiles.ini`.
 
 ```json
 {

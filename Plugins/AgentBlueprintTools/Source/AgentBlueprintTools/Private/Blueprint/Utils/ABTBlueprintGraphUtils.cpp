@@ -105,6 +105,30 @@ namespace ABT::Blueprint
         return nullptr;
     }
 
+    UEdGraphNode* FindExistingNodeInBlueprint(UBlueprint* Blueprint, const FString& GraphName, const FString& Id)
+    {
+        if (!Blueprint || Id.IsEmpty())
+        {
+            return nullptr;
+        }
+
+        if (!GraphName.IsEmpty())
+        {
+            return FindExistingNodeByGuidOrName(FindGraph(Blueprint, GraphName), Id);
+        }
+
+        TArray<UEdGraph*> Graphs;
+        Blueprint->GetAllGraphs(Graphs);
+        for (UEdGraph* Graph : Graphs)
+        {
+            if (UEdGraphNode* Node = FindExistingNodeByGuidOrName(Graph, Id))
+            {
+                return Node;
+            }
+        }
+        return nullptr;
+    }
+
     UEdGraphPin* FindFirstPin(UEdGraphNode* Node, EEdGraphPinDirection Direction, const FName& Category)
     {
         if (!Node) return nullptr;

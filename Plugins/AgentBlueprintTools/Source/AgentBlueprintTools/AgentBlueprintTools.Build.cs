@@ -19,6 +19,7 @@ public class AgentBlueprintTools : ModuleRules
             "AssetRegistry",
             "AssetTools",
             "BlueprintGraph",
+            "BlueprintEditorLibrary",
             "EditorScriptingUtilities",
             "HTTP",
             "HTTPServer",

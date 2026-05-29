@@ -122,6 +122,21 @@ namespace
         {
             RequireField(Op, OpName, TEXT("target"), OutMessages);
         }
+        else if (OpName == TEXT("remove_node"))
+        {
+            if (!HasField(Op, TEXT("node")) && !HasField(Op, TEXT("target")))
+            {
+                OutMessages.Add(TEXT("remove_node.node or remove_node.target is required."));
+            }
+        }
+        else if (OpName == TEXT("set_blueprint_property"))
+        {
+            RequireField(Op, OpName, TEXT("property"), OutMessages);
+            if (!HasField(Op, TEXT("value")))
+            {
+                OutMessages.Add(TEXT("set_blueprint_property.value is required."));
+            }
+        }
         else if (OpName == TEXT("ensure_timer_loop"))
         {
             RequireField(Op, OpName, TEXT("function"), OutMessages);
@@ -140,6 +155,13 @@ namespace
             {
                 OutMessages.Add(TEXT("configure_figma_widget.root or configure_figma_widget.children is required."));
             }
+        }
+        else if (OpName == TEXT("configure_message_plate_widget"))
+        {
+            RequireField(Op, OpName, TEXT("channel"), OutMessages);
+            RequireField(Op, OpName, TEXT("payloadStruct"), OutMessages);
+            RequireField(Op, OpName, TEXT("trueTexture"), OutMessages);
+            RequireField(Op, OpName, TEXT("falseTexture"), OutMessages);
         }
         else
         {
@@ -187,6 +209,284 @@ namespace
             }
         }
         return Children;
+    }
+
+    FString BlueprintNodeKind(const UEdGraphNode* Node)
+    {
+        if (Cast<UK2Node_CallFunction>(Node)) return TEXT("CallFunction");
+        if (Cast<UK2Node_IfThenElse>(Node)) return TEXT("Branch");
+        if (Cast<UK2Node_VariableGet>(Node)) return TEXT("GetVariable");
+        if (Cast<UK2Node_VariableSet>(Node)) return TEXT("SetVariable");
+        if (Cast<UK2Node_CustomEvent>(Node)) return TEXT("CustomEvent");
+        if (Cast<UK2Node_Event>(Node)) return TEXT("Event");
+        if (Cast<UK2Node_FunctionEntry>(Node)) return TEXT("FunctionEntry");
+        return TEXT("Node");
+    }
+
+    TSharedPtr<FJsonObject> ExportNodeBrief(const UEdGraphNode* Node)
+    {
+        TSharedPtr<FJsonObject> Json = ABTJson::Object();
+        if (!Node)
+        {
+            return Json;
+        }
+
+        Json->SetStringField(TEXT("id"), Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+        Json->SetStringField(TEXT("object_name"), Node->GetName());
+        Json->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+        Json->SetStringField(TEXT("kind"), BlueprintNodeKind(Node));
+        return Json;
+    }
+
+    void AddUniqueString(TArray<TSharedPtr<FJsonValue>>& Values, TSet<FString>& Seen, const FString& Value)
+    {
+        if (Value.IsEmpty() || Seen.Contains(Value))
+        {
+            return;
+        }
+        Seen.Add(Value);
+        Values.Add(ABTJson::StringValue(Value));
+    }
+
+    void AddUniqueObjectByKey(TArray<TSharedPtr<FJsonValue>>& Values, TSet<FString>& Seen, const FString& Key, const TSharedPtr<FJsonObject>& Object)
+    {
+        if (Key.IsEmpty() || Seen.Contains(Key) || !Object.IsValid())
+        {
+            return;
+        }
+        Seen.Add(Key);
+        Values.Add(ABTJson::ObjectValue(Object));
+    }
+
+    bool IsExecPin(const UEdGraphPin* Pin)
+    {
+        return Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec;
+    }
+
+    bool IsGraphEntryNode(const UEdGraphNode* Node)
+    {
+        return Cast<UK2Node_Event>(Node) || Cast<UK2Node_CustomEvent>(Node) || Cast<UK2Node_FunctionEntry>(Node);
+    }
+
+    TSharedPtr<FJsonObject> ExportExecEdge(const UEdGraphPin* FromPin, const UEdGraphPin* ToPin)
+    {
+        TSharedPtr<FJsonObject> Edge = ABTJson::Object();
+        const UEdGraphNode* FromNode = FromPin ? FromPin->GetOwningNode() : nullptr;
+        const UEdGraphNode* ToNode = ToPin ? ToPin->GetOwningNode() : nullptr;
+        Edge->SetStringField(TEXT("from_node"), FromNode ? FromNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens) : FString());
+        Edge->SetStringField(TEXT("from_pin"), FromPin ? FromPin->PinName.ToString() : FString());
+        Edge->SetStringField(TEXT("to_node"), ToNode ? ToNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens) : FString());
+        Edge->SetStringField(TEXT("to_pin"), ToPin ? ToPin->PinName.ToString() : FString());
+        return Edge;
+    }
+
+    void AddExecPathResult(
+        TArray<TSharedPtr<FJsonValue>>& OutPaths,
+        const UEdGraphNode* EntryNode,
+        const TArray<TSharedPtr<FJsonValue>>& PathNodes,
+        const TArray<TSharedPtr<FJsonValue>>& PathEdges,
+        bool bTruncated,
+        bool bCycle)
+    {
+        TSharedPtr<FJsonObject> Path = ABTJson::Object();
+        Path->SetStringField(TEXT("entry"), EntryNode ? EntryNode->GetNodeTitle(ENodeTitleType::ListView).ToString() : FString());
+        Path->SetArrayField(TEXT("nodes"), PathNodes);
+        Path->SetArrayField(TEXT("edges"), PathEdges);
+        Path->SetBoolField(TEXT("truncated"), bTruncated);
+        Path->SetBoolField(TEXT("cycle"), bCycle);
+        OutPaths.Add(ABTJson::ObjectValue(Path));
+    }
+
+    void WalkExecPaths(
+        UEdGraphNode* EntryNode,
+        UEdGraphNode* Node,
+        TSet<UEdGraphNode*> Visited,
+        TArray<TSharedPtr<FJsonValue>> PathNodes,
+        TArray<TSharedPtr<FJsonValue>> PathEdges,
+        TArray<TSharedPtr<FJsonValue>>& OutPaths,
+        int32 Depth)
+    {
+        constexpr int32 MaxDepth = 64;
+        constexpr int32 MaxPaths = 64;
+        if (!Node || OutPaths.Num() >= MaxPaths)
+        {
+            return;
+        }
+
+        PathNodes.Add(ABTJson::ObjectValue(ExportNodeBrief(Node)));
+
+        if (Visited.Contains(Node))
+        {
+            AddExecPathResult(OutPaths, EntryNode, PathNodes, PathEdges, false, true);
+            return;
+        }
+
+        if (Depth >= MaxDepth)
+        {
+            AddExecPathResult(OutPaths, EntryNode, PathNodes, PathEdges, true, false);
+            return;
+        }
+
+        Visited.Add(Node);
+
+        bool bHasNext = false;
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (!Pin || Pin->Direction != EGPD_Output || !IsExecPin(Pin))
+            {
+                continue;
+            }
+
+            for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+            {
+                if (!LinkedPin || !IsExecPin(LinkedPin))
+                {
+                    continue;
+                }
+
+                UEdGraphNode* NextNode = LinkedPin->GetOwningNode();
+                if (!NextNode)
+                {
+                    continue;
+                }
+
+                bHasNext = true;
+                TArray<TSharedPtr<FJsonValue>> BranchEdges = PathEdges;
+                BranchEdges.Add(ABTJson::ObjectValue(ExportExecEdge(Pin, LinkedPin)));
+                WalkExecPaths(EntryNode, NextNode, Visited, PathNodes, BranchEdges, OutPaths, Depth + 1);
+            }
+        }
+
+        if (!bHasNext)
+        {
+            AddExecPathResult(OutPaths, EntryNode, PathNodes, PathEdges, false, false);
+        }
+    }
+
+    TSharedPtr<FJsonObject> BuildGraphAnalysis(UBlueprint* Blueprint, UEdGraph* Graph)
+    {
+        TSharedPtr<FJsonObject> Analysis = ABTJson::Object();
+        if (!Graph)
+        {
+            return Analysis;
+        }
+
+        TSet<FString> ComponentNames;
+        if (Blueprint && Blueprint->SimpleConstructionScript)
+        {
+            for (USCS_Node* SCSNode : Blueprint->SimpleConstructionScript->GetAllNodes())
+            {
+                if (SCSNode)
+                {
+                    ComponentNames.Add(SCSNode->GetVariableName().ToString());
+                }
+            }
+        }
+
+        TArray<TSharedPtr<FJsonValue>> EntryPoints;
+        TArray<TSharedPtr<FJsonValue>> Reads;
+        TArray<TSharedPtr<FJsonValue>> Writes;
+        TArray<TSharedPtr<FJsonValue>> Calls;
+        TArray<TSharedPtr<FJsonValue>> ComponentTouches;
+        TArray<TSharedPtr<FJsonValue>> ExecEdges;
+        TArray<TSharedPtr<FJsonValue>> ExecPaths;
+        TSet<FString> ReadSeen;
+        TSet<FString> WriteSeen;
+        TSet<FString> CallSeen;
+        TSet<FString> ComponentSeen;
+        TArray<UEdGraphNode*> EntryNodes;
+
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (!Node)
+            {
+                continue;
+            }
+
+            if (IsGraphEntryNode(Node))
+            {
+                EntryNodes.Add(Node);
+                EntryPoints.Add(ABTJson::ObjectValue(ExportNodeBrief(Node)));
+            }
+
+            if (UK2Node_VariableGet* Get = Cast<UK2Node_VariableGet>(Node))
+            {
+                const FString VariableName = Get->GetVarNameString();
+                AddUniqueString(Reads, ReadSeen, VariableName);
+                if (ComponentNames.Contains(VariableName))
+                {
+                    TSharedPtr<FJsonObject> Touch = ExportNodeBrief(Node);
+                    Touch->SetStringField(TEXT("component"), VariableName);
+                    Touch->SetStringField(TEXT("access"), TEXT("read"));
+                    AddUniqueObjectByKey(ComponentTouches, ComponentSeen, VariableName + TEXT("|read|") + Touch->GetStringField(TEXT("id")), Touch);
+                }
+            }
+
+            if (UK2Node_VariableSet* Set = Cast<UK2Node_VariableSet>(Node))
+            {
+                const FString VariableName = Set->GetVarNameString();
+                AddUniqueString(Writes, WriteSeen, VariableName);
+                if (ComponentNames.Contains(VariableName))
+                {
+                    TSharedPtr<FJsonObject> Touch = ExportNodeBrief(Node);
+                    Touch->SetStringField(TEXT("component"), VariableName);
+                    Touch->SetStringField(TEXT("access"), TEXT("write"));
+                    AddUniqueObjectByKey(ComponentTouches, ComponentSeen, VariableName + TEXT("|write|") + Touch->GetStringField(TEXT("id")), Touch);
+                }
+            }
+
+            if (UK2Node_CallFunction* Call = Cast<UK2Node_CallFunction>(Node))
+            {
+                TSharedPtr<FJsonObject> CallJson = ExportNodeBrief(Node);
+                const FString FunctionName = Call->FunctionReference.GetMemberName().ToString();
+                UClass* OwnerClass = Call->FunctionReference.GetMemberParentClass(Call->GetBlueprintClassFromNode());
+                CallJson->SetStringField(TEXT("function"), FunctionName);
+                CallJson->SetStringField(TEXT("owner_class"), OwnerClass ? OwnerClass->GetPathName() : FString());
+                AddUniqueObjectByKey(Calls, CallSeen, (OwnerClass ? OwnerClass->GetPathName() : FString()) + TEXT("::") + FunctionName + TEXT("|") + CallJson->GetStringField(TEXT("id")), CallJson);
+
+                if (FunctionName.Contains(TEXT("Component")) || FunctionName.Contains(TEXT("Material")) || FunctionName.Contains(TEXT("StaticMesh")) || FunctionName.Contains(TEXT("Visibility")))
+                {
+                    TSharedPtr<FJsonObject> Touch = ExportNodeBrief(Node);
+                    Touch->SetStringField(TEXT("component"), TEXT("<call-target>"));
+                    Touch->SetStringField(TEXT("access"), FunctionName);
+                    AddUniqueObjectByKey(ComponentTouches, ComponentSeen, Touch->GetStringField(TEXT("id")) + TEXT("|call"), Touch);
+                }
+            }
+
+            for (UEdGraphPin* Pin : Node->Pins)
+            {
+                if (!Pin || Pin->Direction != EGPD_Output || !IsExecPin(Pin))
+                {
+                    continue;
+                }
+
+                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    if (LinkedPin && IsExecPin(LinkedPin))
+                    {
+                        ExecEdges.Add(ABTJson::ObjectValue(ExportExecEdge(Pin, LinkedPin)));
+                    }
+                }
+            }
+        }
+
+        for (UEdGraphNode* EntryNode : EntryNodes)
+        {
+            WalkExecPaths(EntryNode, EntryNode, TSet<UEdGraphNode*>(), TArray<TSharedPtr<FJsonValue>>(), TArray<TSharedPtr<FJsonValue>>(), ExecPaths, 0);
+            if (ExecPaths.Num() >= 64)
+            {
+                break;
+            }
+        }
+
+        Analysis->SetArrayField(TEXT("entry_points"), EntryPoints);
+        Analysis->SetArrayField(TEXT("variable_reads"), Reads);
+        Analysis->SetArrayField(TEXT("variable_writes"), Writes);
+        Analysis->SetArrayField(TEXT("external_calls"), Calls);
+        Analysis->SetArrayField(TEXT("component_touches"), ComponentTouches);
+        Analysis->SetArrayField(TEXT("execution_edges"), ExecEdges);
+        Analysis->SetArrayField(TEXT("execution_paths"), ExecPaths);
+        return Analysis;
     }
 
     TSharedPtr<FJsonObject> ExportWidgetSlot(UWidget* Widget)
@@ -516,6 +816,7 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
     TArray<TSharedPtr<FJsonValue>> Writes;
     TArray<TSharedPtr<FJsonValue>> Calls;
     TArray<TSharedPtr<FJsonValue>> GraphSummaries;
+    TArray<TSharedPtr<FJsonValue>> GraphAnalyses;
     TArray<UEdGraph*> GraphsRaw;
     Blueprint->GetAllGraphs(GraphsRaw);
     for (UEdGraph* Graph : GraphsRaw)
@@ -534,6 +835,10 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
             if (UK2Node_VariableSet* Set = Cast<UK2Node_VariableSet>(Node)) Writes.Add(ABTJson::StringValue(Set->GetVarNameString()));
             if (UK2Node_CallFunction* Call = Cast<UK2Node_CallFunction>(Node)) Calls.Add(ABTJson::StringValue(Call->FunctionReference.GetMemberName().ToString()));
         }
+
+        TSharedPtr<FJsonObject> GraphAnalysis = BuildGraphAnalysis(Blueprint, Graph);
+        GraphAnalysis->SetStringField(TEXT("name"), Graph->GetName());
+        GraphAnalyses.Add(ABTJson::ObjectValue(GraphAnalysis));
     }
     Summary->SetArrayField(TEXT("entry_points"), EntryPoints);
     Summary->SetArrayField(TEXT("variable_reads"), Reads);
@@ -542,6 +847,7 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
     Summary->SetNumberField(TEXT("graph_count"), GraphsRaw.Num());
     OutJson->SetObjectField(TEXT("semantic_summary"), Summary);
     OutJson->SetArrayField(TEXT("graph_summaries"), GraphSummaries);
+    OutJson->SetArrayField(TEXT("graph_analyses"), GraphAnalyses);
 
     if (Options.bIncludeGraphs)
     {
@@ -570,6 +876,7 @@ bool FABTBlueprintTools::AnalyzeBlueprintGraph(const FString& AssetPath, const F
     OutJson = ABTJson::Ok();
     OutJson->SetStringField(TEXT("asset_path"), AssetPath);
     OutJson->SetStringField(TEXT("graph"), Graph->GetName());
+    OutJson->SetObjectField(TEXT("analysis"), BuildGraphAnalysis(Blueprint, Graph));
     OutJson->SetObjectField(TEXT("graph_ir"), ExportGraph(Graph, true));
     return true;
 }
@@ -697,6 +1004,11 @@ bool FABTBlueprintTools::ApplyOperation(UBlueprint* Blueprint, const TSharedPtr<
         return ABT::Blueprint::Ops::ConfigureFigmaWidget(Blueprint, Op, OutMessages, OutError);
     }
 
+    if (OpName == TEXT("configure_message_plate_widget"))
+    {
+        return ABT::Blueprint::Ops::ConfigureMessagePlateWidget(Blueprint, Op, OutMessages, OutError);
+    }
+
     if (OpName == TEXT("set_static_mesh"))
     {
         return ABT::Blueprint::Ops::SetStaticMesh(Blueprint, Op, OutMessages, OutError);
@@ -714,12 +1026,22 @@ bool FABTBlueprintTools::ApplyOperation(UBlueprint* Blueprint, const TSharedPtr<
 
     if (OpName == TEXT("connect_exec") || OpName == TEXT("connect_data"))
     {
-        return ABT::Blueprint::Ops::ConnectPins(Op, NodeMap, OutMessages, OutError);
+        return ABT::Blueprint::Ops::ConnectPins(Blueprint, Op, NodeMap, OutMessages, OutError);
     }
 
     if (OpName == TEXT("set_pin_default"))
     {
-        return ABT::Blueprint::Ops::SetPinDefault(Op, NodeMap, OutError);
+        return ABT::Blueprint::Ops::SetPinDefault(Blueprint, Op, NodeMap, OutMessages, OutError);
+    }
+
+    if (OpName == TEXT("remove_node"))
+    {
+        return ABT::Blueprint::Ops::RemoveNode(Blueprint, Op, NodeMap, OutMessages, OutError);
+    }
+
+    if (OpName == TEXT("set_blueprint_property"))
+    {
+        return ABT::Blueprint::Ops::SetBlueprintProperty(Blueprint, Op, OutMessages, OutError);
     }
 
     OutError = FString::Printf(TEXT("Unsupported op: %s"), *OpName);
