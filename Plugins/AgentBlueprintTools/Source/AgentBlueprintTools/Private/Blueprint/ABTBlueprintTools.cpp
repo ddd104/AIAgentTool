@@ -727,7 +727,7 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
                 }
                 W->SetStringField(TEXT("visibility"), StaticEnum<ESlateVisibility>()->GetNameStringByValue(static_cast<int64>(Widget->GetVisibility())));
                 W->SetNumberField(TEXT("render_opacity"), Widget->GetRenderOpacity());
-                const FWidgetTransform Transform = Widget->GetRenderTransform();
+                const FWidgetTransform Transform = Widget->RenderTransform;
                 TArray<TSharedPtr<FJsonValue>> Scale;
                 Scale.Add(MakeShared<FJsonValueNumber>(Transform.Scale.X));
                 Scale.Add(MakeShared<FJsonValueNumber>(Transform.Scale.Y));
@@ -740,17 +740,17 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
                 if (const UTextBlock* TextBlock = Cast<UTextBlock>(Widget))
                 {
                     W->SetStringField(TEXT("text"), TextBlock->GetText().ToString());
-                    W->SetNumberField(TEXT("font_size"), TextBlock->GetFont().Size);
-                    W->SetField(TEXT("text_color"), ColorValue(TextBlock->GetColorAndOpacity().GetSpecifiedColor()));
+                    W->SetNumberField(TEXT("font_size"), TextBlock->Font.Size);
+                    W->SetField(TEXT("text_color"), ColorValue(TextBlock->ColorAndOpacity.GetSpecifiedColor()));
                 }
                 if (const UImage* Image = Cast<UImage>(Widget))
                 {
-                    W->SetStringField(TEXT("brush_resource"), BrushResourcePath(Image->GetBrush()));
-                    W->SetField(TEXT("image_color"), ColorValue(Image->GetColorAndOpacity()));
+                    W->SetStringField(TEXT("brush_resource"), BrushResourcePath(Image->Brush));
+                    W->SetField(TEXT("image_color"), ColorValue(Image->ColorAndOpacity));
                 }
                 if (const UBorder* Border = Cast<UBorder>(Widget))
                 {
-                    W->SetField(TEXT("brush_color"), ColorValue(Border->GetBrushColor()));
+                    W->SetField(TEXT("brush_color"), ColorValue(Border->BrushColor));
                 }
                 Widgets.Add(ABTJson::ObjectValue(W));
             }
@@ -789,7 +789,7 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
                 {
                     ObjectTrackCount += MovieSceneBinding.GetTracks().Num();
                 }
-                for (const UMovieSceneTrack* Track : MovieScene->GetTracks())
+                for (const UMovieSceneTrack* Track : MovieScene->GetMasterTracks())
                 {
                     if (const UMovieSceneEventTrack* EventTrack = Cast<UMovieSceneEventTrack>(Track))
                     {
@@ -866,7 +866,7 @@ bool FABTBlueprintTools::AnalyzeBlueprintGraph(const FString& AssetPath, const F
     UBlueprint* Blueprint = LoadBlueprint(AssetPath, OutError);
     if (!Blueprint) return false;
 
-    UEdGraph* Graph = GraphName.IsEmpty() ? (Blueprint->UbergraphPages.Num() ? Blueprint->UbergraphPages[0].Get() : nullptr) : FindGraph(Blueprint, GraphName);
+    UEdGraph* Graph = GraphName.IsEmpty() ? (Blueprint->UbergraphPages.Num() ? Blueprint->UbergraphPages[0] : nullptr) : FindGraph(Blueprint, GraphName);
     if (!Graph)
     {
         OutError = TEXT("Graph not found");

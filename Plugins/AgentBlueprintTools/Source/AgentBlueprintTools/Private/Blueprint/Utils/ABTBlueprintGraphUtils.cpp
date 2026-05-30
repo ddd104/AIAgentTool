@@ -20,8 +20,7 @@ namespace ABT::Blueprint
         }
         else if (TypeName.Equals(TEXT("float"), ESearchCase::IgnoreCase) || TypeName.Equals(TEXT("double"), ESearchCase::IgnoreCase))
         {
-            PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
-            PinType.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+            PinType.PinCategory = UEdGraphSchema_K2::PC_Float;
         }
         else if (TypeName.Equals(TEXT("int"), ESearchCase::IgnoreCase) || TypeName.Equals(TEXT("integer"), ESearchCase::IgnoreCase))
         {

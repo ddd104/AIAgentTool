@@ -46,10 +46,10 @@ protected:
 
 private:
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UWidget>> PageWidgets;
+	TArray<UWidget*> PageWidgets;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UWidget> ActivePage;
+	UWidget* ActivePage;
 
 	void CachePages();
 	void BindButton(int32 Index);

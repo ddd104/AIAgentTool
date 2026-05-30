@@ -132,7 +132,7 @@ void UABTButtonPagesWidget::ShowPageByIndex(int32 PageIndex)
 
 	ActivePageIndex = PageIndex;
 	ActivePage->SetRenderOpacity(InitialOpacity);
-	FWidgetTransform Transform = ActivePage->GetRenderTransform();
+	FWidgetTransform Transform = ActivePage->RenderTransform;
 	Transform.Scale = InitialScale;
 	ActivePage->SetRenderTransform(Transform);
 	ActivePage->SetVisibility(ESlateVisibility::Visible);

@@ -3,7 +3,6 @@
 
 #include "EditorAssetLibrary.h"
 #include "MaterialEditingLibrary.h"
-#include "MaterialDomain.h"
 #include "Materials/MaterialExpressionConstant2Vector.h"
 #include "Materials/MaterialExpressionConstantBiasScale.h"
 #include "Materials/MaterialExpressionConstant3Vector.h"
@@ -255,7 +254,7 @@ namespace
             return;
         }
 
-        for (UMaterialExpression* Expression : Material->GetExpressions())
+        for (UMaterialExpression* Expression : Material->Expressions)
         {
             if (Expression)
             {
@@ -263,7 +262,7 @@ namespace
             }
         }
 
-        if (OutExpressions.IsEmpty())
+        if (OutExpressions.Num() == 0)
         {
             GatherMaterialExpressionSubobjects(Material, OutExpressions);
         }
@@ -408,7 +407,7 @@ namespace
 
         Reachable.Add(Expression);
 
-        const int32 InputCount = Expression->GetInputsView().Num();
+        const int32 InputCount = Expression->GetInputs().Num();
         for (int32 InputIndex = 0; InputIndex < InputCount; ++InputIndex)
         {
             FExpressionInput* Input = Expression->GetInput(InputIndex);
@@ -604,7 +603,7 @@ namespace
         }
 
         TArray<TSharedPtr<FJsonValue>> Inputs;
-        const int32 InputCount = Expression->GetInputsView().Num();
+        const int32 InputCount = Expression->GetInputs().Num();
         for (int32 InputIndex = 0; InputIndex < InputCount; ++InputIndex)
         {
             FExpressionInput* Input = Expression->GetInput(InputIndex);
@@ -820,7 +819,7 @@ namespace
                 continue;
             }
 
-            const int32 InputCount = Expression->GetInputsView().Num();
+            const int32 InputCount = Expression->GetInputs().Num();
             for (int32 InputIndex = 0; InputIndex < InputCount; ++InputIndex)
             {
                 FExpressionInput* Input = Expression->GetInput(InputIndex);
@@ -867,7 +866,7 @@ namespace
         TArray<UMaterialExpression*> Expressions;
         TArray<UMaterialExpressionComment*> Comments;
         GatherMaterialExpressionSubobjects(Material, Expressions, &Comments);
-        if (Expressions.IsEmpty() && Comments.IsEmpty())
+        if (Expressions.Num() == 0 && Comments.Num() == 0)
         {
             OutMessages.Add(TEXT("No material expression subobjects found to repair"));
             return true;
@@ -875,8 +874,6 @@ namespace
 
         Material->Modify();
         Material->PreEditChange(nullptr);
-
-        FMaterialExpressionCollection& Collection = Material->GetExpressionCollection();
 
         int32 AddedExpressions = 0;
         for (UMaterialExpression* Expression : Expressions)
@@ -886,9 +883,9 @@ namespace
                 continue;
             }
 
-            if (!Collection.Expressions.Contains(Expression))
+            if (!Material->Expressions.Contains(Expression))
             {
-                Collection.AddExpression(Expression);
+                Material->Expressions.Add(Expression);
                 ++AddedExpressions;
             }
         }
@@ -901,9 +898,9 @@ namespace
                 continue;
             }
 
-            if (!Collection.EditorComments.Contains(Comment))
+            if (!Material->EditorComments.Contains(Comment))
             {
-                Collection.AddComment(Comment);
+                Material->EditorComments.Add(Comment);
                 ++AddedComments;
             }
         }
@@ -1020,7 +1017,7 @@ namespace
         ExportOptionalBoolSetting(Material, Json, TEXT("allow_negative_emissive_color"), TEXT("bAllowNegativeEmissiveColor"));
         ExportOptionalBoolSetting(Material, Json, TEXT("cast_ray_traced_shadows"), TEXT("bCastRayTracedShadows"));
         Json->SetNumberField(TEXT("expression_count"), Expressions.Num());
-        Json->SetNumberField(TEXT("expression_collection_count"), Material->GetExpressions().Num());
+        Json->SetNumberField(TEXT("expression_collection_count"), Material->Expressions.Num());
         Json->SetNumberField(TEXT("texture_sample_count"), TextureSampleCount);
         Json->SetNumberField(TEXT("custom_expression_count"), CustomExpressionCount);
     }

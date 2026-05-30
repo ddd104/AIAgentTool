@@ -7,11 +7,26 @@
 #include "Utils/ABTJson.h"
 #include "Containers/StringConv.h"
 #include "HAL/FileManager.h"
+#include "HttpServerResponse.h"
 #include "Misc/CommandLine.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/Parse.h"
+#include "Runtime/Launch/Resources/Version.h"
+
+namespace
+{
+    template <typename LambdaType>
+    FHttpRequestHandler MakeHttpHandler(LambdaType&& Lambda)
+    {
+#if ENGINE_MAJOR_VERSION >= 5
+        return FHttpRequestHandler::CreateLambda(Forward<LambdaType>(Lambda));
+#else
+        return FHttpRequestHandler(Forward<LambdaType>(Lambda));
+#endif
+    }
+}
 
 void FABTLocalBridgeServer::Start()
 {
@@ -201,14 +216,14 @@ void FABTLocalBridgeServer::BindRoutes()
     check(Router.IsValid());
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/health")), EHttpServerRequestVerbs::VERB_GET,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleHealth(Request, OnComplete);
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/blueprint/read")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/blueprint/read"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -221,7 +236,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/blueprint/analyze")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/blueprint/analyze"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -235,7 +250,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/blueprint/functions")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/blueprint/functions"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -249,7 +264,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/blueprint/patch/dry-run")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/blueprint/patch/dry-run"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -265,7 +280,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/blueprint/patch/apply")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/blueprint/patch/apply"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -281,7 +296,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/blueprint/compile")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/blueprint/compile"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -291,7 +306,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/material/read")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/material/read"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -301,7 +316,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/material/patch")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/material/patch"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -317,7 +332,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/performance/analyze")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/performance/analyze"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -327,7 +342,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/performance/optimization/dry-run")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/performance/optimization/dry-run"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -337,7 +352,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/performance/optimization/apply")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/performance/optimization/apply"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -347,7 +362,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/asset/create")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/asset/create"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -357,7 +372,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/asset/import")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/asset/import"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -367,7 +382,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/asset/read")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/asset/read"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -377,7 +392,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/asset/set-property")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/asset/set-property"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -387,7 +402,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/asset/save")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/asset/save"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -397,7 +412,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/asset/delete")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/asset/delete"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)
@@ -407,7 +422,7 @@ void FABTLocalBridgeServer::BindRoutes()
         })));
 
     RouteHandles.Add(Router->BindRoute(FHttpPath(TEXT("/v1/level/place-actor")), EHttpServerRequestVerbs::VERB_POST,
-        FHttpRequestHandler::CreateLambda(
+        MakeHttpHandler(
         [this](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
         {
             return HandleJsonRoute(TEXT("/v1/level/place-actor"), Request, OnComplete, [](const TSharedPtr<FJsonObject>& Body, TSharedPtr<FJsonObject>& OutJson, FString& OutError)

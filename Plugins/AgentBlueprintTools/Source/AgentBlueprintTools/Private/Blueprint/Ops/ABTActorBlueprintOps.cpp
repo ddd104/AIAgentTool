@@ -162,7 +162,7 @@ namespace ABT::Blueprint::Ops
 
     bool EnsureTimerLoop(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError)
     {
-        UEdGraph* Graph = Blueprint && Blueprint->UbergraphPages.Num() ? Blueprint->UbergraphPages[0].Get() : nullptr;
+        UEdGraph* Graph = Blueprint && Blueprint->UbergraphPages.Num() ? Blueprint->UbergraphPages[0] : nullptr;
         if (!Graph)
         {
             OutError = TEXT("Blueprint has no EventGraph");

@@ -5,6 +5,7 @@ public class AgentBlueprintTools : ModuleRules
     public AgentBlueprintTools(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+        CppStandard = CppStandardVersion.Cpp17;
 
         PublicDependencyModuleNames.AddRange(new[]
         {
@@ -19,7 +20,6 @@ public class AgentBlueprintTools : ModuleRules
             "AssetRegistry",
             "AssetTools",
             "BlueprintGraph",
-            "BlueprintEditorLibrary",
             "EditorScriptingUtilities",
             "HTTP",
             "HTTPServer",

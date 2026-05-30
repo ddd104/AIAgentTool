@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "HttpServerConstants.h"
 #include "HttpServerModule.h"
 #include "IHttpRouter.h"
 #include "HttpRouteHandle.h"

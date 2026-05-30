@@ -8,8 +8,7 @@ public class AIAgentToolEditorTarget : TargetRules
 	public AIAgentToolEditorTarget( TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Editor;
-		DefaultBuildSettings = BuildSettingsVersion.V5;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_6;
+		DefaultBuildSettings = BuildSettingsVersion.V2;
 		ExtraModuleNames.Add("AIAgentTool");
 	}
 }

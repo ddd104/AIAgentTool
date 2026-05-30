@@ -15,10 +15,13 @@
 #include "Engine/Texture2D.h"
 #include "HAL/FileManager.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "Runtime/Launch/Resources/Version.h"
 #include "ScopedTransaction.h"
+#include "StaticMeshResources.h"
 
 namespace
 {
@@ -216,9 +219,11 @@ namespace
             case TC_HDR_Compressed: return TEXT("HDR_Compressed");
             case TC_BC7: return TEXT("BC7");
             case TC_HalfFloat: return TEXT("HalfFloat");
+#if ENGINE_MAJOR_VERSION >= 5
             case TC_LQ: return TEXT("LQ");
             case TC_SingleFloat: return TEXT("SingleFloat");
             case TC_HDR_F32: return TEXT("HDR_F32");
+#endif
             default: return FString::FromInt(static_cast<int32>(Settings));
         }
     }
@@ -324,7 +329,7 @@ namespace
             ConfigFile.Read(Filename);
         }
 
-        const FConfigSection* ConfigSection = ConfigFile.FindSection(Section);
+        const FConfigSection* ConfigSection = ConfigFile.Find(Section);
         if (!ConfigSection)
         {
             return FString();
@@ -752,11 +757,11 @@ namespace
         FARFilter Filter;
         Filter.bRecursivePaths = true;
         Filter.bRecursiveClasses = true;
-        Filter.ClassPaths.Add(UTexture2D::StaticClass()->GetClassPathName());
-        Filter.ClassPaths.Add(UMaterial::StaticClass()->GetClassPathName());
-        Filter.ClassPaths.Add(UMaterialInstanceConstant::StaticClass()->GetClassPathName());
-        Filter.ClassPaths.Add(UStaticMesh::StaticClass()->GetClassPathName());
-        Filter.ClassPaths.Add(USkeletalMesh::StaticClass()->GetClassPathName());
+        Filter.ClassNames.Add(UTexture2D::StaticClass()->GetFName());
+        Filter.ClassNames.Add(UMaterial::StaticClass()->GetFName());
+        Filter.ClassNames.Add(UMaterialInstanceConstant::StaticClass()->GetFName());
+        Filter.ClassNames.Add(UStaticMesh::StaticClass()->GetFName());
+        Filter.ClassNames.Add(USkeletalMesh::StaticClass()->GetFName());
 
         for (const FString& Path : ContentPaths)
         {
@@ -824,7 +829,7 @@ namespace
         TArray<FAssetData> Unique;
         for (const FAssetData& Asset : Assets)
         {
-            const FString Key = Asset.GetObjectPathString();
+            const FString Key = Asset.ObjectPath.ToString();
             if (Key.IsEmpty() || Seen.Contains(Key))
             {
                 continue;
@@ -1018,7 +1023,7 @@ namespace
         const FString AssetPath = Material->GetPathName();
         int32 TextureSampleCount = 0;
         int32 CustomExpressionCount = 0;
-        for (UMaterialExpression* Expression : Material->GetExpressions())
+        for (UMaterialExpression* Expression : Material->Expressions)
         {
             if (Cast<UMaterialExpressionTextureSample>(Expression))
             {
@@ -1030,7 +1035,7 @@ namespace
             }
         }
 
-        const int32 ExpressionCount = Material->GetExpressions().Num();
+        const int32 ExpressionCount = Material->Expressions.Num();
         if (ExpressionCount > Thresholds.MaterialExpressionWarning)
         {
             ++Stats.Issues;
@@ -1156,7 +1161,10 @@ namespace
 
         ++Stats.StaticMeshes;
         const int32 LODCount = Mesh->GetNumLODs();
-        const int32 TrianglesLod0 = LODCount > 0 ? Mesh->GetNumTriangles(0) : 0;
+        const FStaticMeshRenderData* RenderData = Mesh->GetRenderData();
+        const int32 TrianglesLod0 = (RenderData && RenderData->LODResources.Num() > 0)
+            ? RenderData->LODResources[0].GetNumTriangles()
+            : 0;
         const FString AssetPath = Mesh->GetPathName();
 
         if (TrianglesLod0 > Thresholds.StaticMeshTriangleWarning)
@@ -1183,6 +1191,7 @@ namespace
                 Targets.Names)));
         }
 
+#if ENGINE_MAJOR_VERSION >= 5
         if (Targets.bAndroid && Mesh->NaniteSettings.bEnabled)
         {
             ++Stats.Issues;
@@ -1194,6 +1203,7 @@ namespace
                 TEXT("Verify target Android GPU/RHI support and fallback mesh quality."),
                 { TEXT("Android") })));
         }
+#endif
     }
 
     void AnalyzeSkeletalMesh(

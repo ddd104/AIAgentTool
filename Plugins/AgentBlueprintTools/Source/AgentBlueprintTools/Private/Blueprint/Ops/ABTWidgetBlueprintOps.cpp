@@ -6,7 +6,6 @@
 #include "Animation/WidgetAnimation.h"
 #include "Animation/WidgetAnimationBinding.h"
 #include "Blueprint/Utils/ABTBlueprintGraphUtils.h"
-#include "BlueprintEditorLibrary.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/BorderSlot.h"
@@ -48,12 +47,79 @@
 #include "Styling/SlateBrush.h"
 #include "Tracks/MovieSceneEventTrack.h"
 #include "Tracks/MovieSceneFloatTrack.h"
+#include "UObject/UnrealType.h"
 #include "WidgetBlueprint.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 #include <initializer_list>
 
 namespace
 {
+    FWidgetTransform GetWidgetRenderTransform(const UWidget* Widget)
+    {
+        if (!Widget)
+        {
+            return FWidgetTransform();
+        }
+#if ENGINE_MAJOR_VERSION >= 5
+        return Widget->GetRenderTransform();
+#else
+        return Widget->RenderTransform;
+#endif
+    }
+
+    FSlateFontInfo GetTextBlockFont(const UTextBlock* TextBlock)
+    {
+        if (!TextBlock)
+        {
+            return FSlateFontInfo();
+        }
+#if ENGINE_MAJOR_VERSION >= 5
+        return TextBlock->GetFont();
+#else
+        return TextBlock->Font;
+#endif
+    }
+
+    void NotifyWidgetVariableAdded(UWidgetBlueprint* WidgetBlueprint, const FName VariableName)
+    {
+#if ENGINE_MAJOR_VERSION >= 5
+        if (WidgetBlueprint)
+        {
+            WidgetBlueprint->OnVariableAdded(VariableName);
+        }
+#endif
+    }
+
+    void InitializeAsyncActionNode(UK2Node_AsyncAction* Node, UClass* AsyncActionClass, UFunction* FactoryFunction)
+    {
+        if (!Node || !AsyncActionClass || !FactoryFunction)
+        {
+            return;
+        }
+#if ENGINE_MAJOR_VERSION >= 5
+        Node->InitializeProxyFromFunction(FactoryFunction);
+#else
+        if (FNameProperty* FactoryFunctionNameProperty = FindFProperty<FNameProperty>(Node->GetClass(), TEXT("ProxyFactoryFunctionName")))
+        {
+            FactoryFunctionNameProperty->SetPropertyValue_InContainer(Node, FactoryFunction->GetFName());
+        }
+        if (FObjectProperty* FactoryClassProperty = FindFProperty<FObjectProperty>(Node->GetClass(), TEXT("ProxyFactoryClass")))
+        {
+            FactoryClassProperty->SetObjectPropertyValue_InContainer(Node, AsyncActionClass);
+        }
+        if (FObjectProperty* ProxyClassProperty = FindFProperty<FObjectProperty>(Node->GetClass(), TEXT("ProxyClass")))
+        {
+            ProxyClassProperty->SetObjectPropertyValue_InContainer(Node, AsyncActionClass);
+        }
+        if (FNameProperty* ActivateFunctionNameProperty = FindFProperty<FNameProperty>(Node->GetClass(), TEXT("ProxyActivateFunctionName")))
+        {
+            const FName ActivateName = AsyncActionClass->FindFunctionByName(TEXT("Activate")) ? FName(TEXT("Activate")) : NAME_None;
+            ActivateFunctionNameProperty->SetPropertyValue_InContainer(Node, ActivateName);
+        }
+#endif
+    }
+
     TArray<TSharedPtr<FJsonObject>> ReadPageSpecs(const TSharedPtr<FJsonObject>& Op)
     {
         TArray<TSharedPtr<FJsonObject>> Result;
@@ -110,7 +176,7 @@ namespace
         {
             Animation = NewObject<UWidgetAnimation>(WidgetBlueprint, AnimationName, RF_Transactional);
             WidgetBlueprint->Animations.Add(Animation);
-            WidgetBlueprint->OnVariableAdded(AnimationName);
+            NotifyWidgetVariableAdded(WidgetBlueprint, AnimationName);
         }
 
         Animation->Modify();
@@ -164,8 +230,9 @@ namespace
         }
 
         Section->SetRange(TRange<FFrameNumber>(FFrameNumber(0), EndFrame));
-        Section->GetChannel().AddLinearKey(FFrameNumber(0), InitialOpacity);
-        Section->GetChannel().AddLinearKey(EndFrame, 1.0f);
+        FMovieSceneFloatChannel& Channel = const_cast<FMovieSceneFloatChannel&>(Section->GetChannel());
+        Channel.AddLinearKey(FFrameNumber(0), InitialOpacity);
+        Channel.AddLinearKey(EndFrame, 1.0f);
         OpacityTrack->AddSection(*Section);
     }
 
@@ -212,7 +279,7 @@ namespace
             return;
         }
 
-        UMovieSceneEventTrack* EventTrack = MovieScene->AddTrack<UMovieSceneEventTrack>();
+        UMovieSceneEventTrack* EventTrack = MovieScene->AddMasterTrack<UMovieSceneEventTrack>();
         if (!EventTrack)
         {
             return;
@@ -261,6 +328,7 @@ namespace
 
     void EnsureWidgetGuids(UWidgetBlueprint* WidgetBlueprint)
     {
+#if ENGINE_MAJOR_VERSION >= 5
         if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
         {
             return;
@@ -310,6 +378,9 @@ namespace
         {
             WidgetBlueprint->OnVariableRemoved(StaleName);
         }
+#else
+        (void)WidgetBlueprint;
+#endif
     }
 
     FString SanitizeWidgetName(const FString& RawName, const FString& Fallback)
@@ -606,7 +677,7 @@ namespace
         FVector2D RenderScale;
         if (TryReadVec2(Spec, TEXT("renderScale"), RenderScale))
         {
-            FWidgetTransform Transform = Widget->GetRenderTransform();
+            FWidgetTransform Transform = GetWidgetRenderTransform(Widget);
             Transform.Scale = RenderScale;
             Widget->SetRenderTransform(Transform);
         }
@@ -646,7 +717,7 @@ namespace
             const double FontSize = ABTJson::GetNumber(Spec, TEXT("fontSize"), 0.0);
             if (FontSize > 0.0)
             {
-                FSlateFontInfo Font = TextBlock->GetFont();
+                FSlateFontInfo Font = GetTextBlockFont(TextBlock);
                 Font.Size = static_cast<int32>(FontSize);
                 TextBlock->SetFont(Font);
             }
@@ -1156,7 +1227,7 @@ namespace
         }
 
         UK2Node_AsyncAction* Node = NewObject<UK2Node_AsyncAction>(Graph, AsyncNodeClass);
-        Node->InitializeProxyFromFunction(ListenFunction);
+        InitializeAsyncActionNode(Node, AsyncActionClass, ListenFunction);
         Graph->AddNode(Node, true, false);
         Node->CreateNewGuid();
         Node->NodePosX = X;
@@ -1307,7 +1378,7 @@ namespace ABT::Blueprint::Ops
             PagePanel->SetPadding(FMargin(24.0f));
             PagePanel->SetVisibility(ESlateVisibility::Collapsed);
             PagePanel->SetRenderOpacity(InitialOpacity);
-            FWidgetTransform Transform = PagePanel->GetRenderTransform();
+            FWidgetTransform Transform = GetWidgetRenderTransform(PagePanel);
             Transform.Scale = InitialScale;
             PagePanel->SetRenderTransform(Transform);
             PagePanel->AddChild(PageContent);
@@ -1410,7 +1481,10 @@ namespace ABT::Blueprint::Ops
 
         if (WidgetBlueprint->ParentClass != ParentClass)
         {
-            UBlueprintEditorLibrary::ReparentBlueprint(WidgetBlueprint, ParentClass);
+            WidgetBlueprint->Modify();
+            WidgetBlueprint->ParentClass = ParentClass;
+            FBlueprintEditorUtils::RefreshAllNodes(WidgetBlueprint);
+            FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
             OutMessages.Add(FString::Printf(TEXT("Reparented widget to %s"), *ParentClass->GetPathName()));
         }
 
@@ -1482,7 +1556,7 @@ namespace ABT::Blueprint::Ops
         Text->bIsVariable = true;
         Text->SetText(FText::GetEmpty());
         Text->SetJustification(ETextJustify::Center);
-        FSlateFontInfo Font = Text->GetFont();
+        FSlateFontInfo Font = GetTextBlockFont(Text);
         Font.Size = ABTJson::GetInt(Op, TEXT("fontSize"), 28);
         Text->SetFont(Font);
         FLinearColor TextColor;

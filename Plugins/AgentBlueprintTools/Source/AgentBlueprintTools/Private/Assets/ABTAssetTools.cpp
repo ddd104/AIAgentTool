@@ -6,6 +6,7 @@
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
 #include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
 #include "EngineUtils.h"
 #include "FileHelpers.h"
 #include "Factories/BlueprintFactory.h"
@@ -13,14 +14,14 @@
 #include "WidgetBlueprint.h"
 #include "WidgetBlueprintFactory.h"
 #include "GameFramework/Actor.h"
+#include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/StructureEditorUtils.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Factories/MaterialInstanceConstantFactoryNew.h"
 #include "Misc/Paths.h"
 #include "ScopedTransaction.h"
-#include "StructUtils/UserDefinedStruct.h"
-#include "Subsystems/EditorActorSubsystem.h"
+#include "Engine/UserDefinedStruct.h"
 #include "EdGraphSchema_K2.h"
 #include "UserDefinedStructure/UserDefinedStructEditorData.h"
 #include "UObject/Interface.h"
@@ -176,8 +177,7 @@ namespace
         }
         else if (TypeName.Equals(TEXT("float"), ESearchCase::IgnoreCase) || TypeName.Equals(TEXT("double"), ESearchCase::IgnoreCase))
         {
-            PinType.PinCategory = UEdGraphSchema_K2::PC_Real;
-            PinType.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+            PinType.PinCategory = UEdGraphSchema_K2::PC_Float;
         }
         else if (TypeName.Equals(TEXT("int"), ESearchCase::IgnoreCase) || TypeName.Equals(TEXT("integer"), ESearchCase::IgnoreCase))
         {
@@ -313,15 +313,10 @@ bool FABTAssetTools::CreateAsset(const TSharedPtr<FJsonObject>& Request, TShared
         }
         Created = AssetTools.CreateAsset(AssetName, PackagePath, UMaterialInstanceConstant::StaticClass(), Factory);
     }
-    else if (AssetType.Equals(TEXT("Blueprint"), ESearchCase::IgnoreCase) || AssetType.Equals(TEXT("BlueprintInterface"), ESearchCase::IgnoreCase))
+    else if (AssetType.Equals(TEXT("Blueprint"), ESearchCase::IgnoreCase))
     {
         UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
         UClass* ParentClass = AActor::StaticClass();
-        if (AssetType.Equals(TEXT("BlueprintInterface"), ESearchCase::IgnoreCase))
-        {
-            Factory->BlueprintType = BPTYPE_Interface;
-            ParentClass = UInterface::StaticClass();
-        }
         const FString ParentClassPath = ABTJson::GetString(Request, TEXT("parentClass"));
         if (!ParentClassPath.IsEmpty())
         {
@@ -329,6 +324,22 @@ bool FABTAssetTools::CreateAsset(const TSharedPtr<FJsonObject>& Request, TShared
         }
         Factory->ParentClass = ParentClass;
         Created = AssetTools.CreateAsset(AssetName, PackagePath, UBlueprint::StaticClass(), Factory);
+    }
+    else if (AssetType.Equals(TEXT("BlueprintInterface"), ESearchCase::IgnoreCase))
+    {
+        UPackage* Package = CreatePackage(*Path);
+        UBlueprint* InterfaceBlueprint = FKismetEditorUtilities::CreateBlueprint(
+            UInterface::StaticClass(),
+            Package,
+            *AssetName,
+            BPTYPE_Interface,
+            UBlueprint::StaticClass(),
+            UBlueprintGeneratedClass::StaticClass());
+        if (InterfaceBlueprint)
+        {
+            FAssetRegistryModule::AssetCreated(InterfaceBlueprint);
+            Created = InterfaceBlueprint;
+        }
     }
     else if (AssetType.Equals(TEXT("WidgetBlueprint"), ESearchCase::IgnoreCase))
     {
@@ -422,7 +433,7 @@ bool FABTAssetTools::ImportAssets(const TSharedPtr<FJsonObject>& Request, TShare
 
     UEditorAssetLibrary::MakeDirectory(DestinationPath);
     IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
-    TArray<UObject*> ImportedObjects = AssetTools.ImportAssets(SourceFiles, DestinationPath, nullptr, false, nullptr, false, false);
+    TArray<UObject*> ImportedObjects = AssetTools.ImportAssets(SourceFiles, DestinationPath, nullptr, false, nullptr);
 
     OutJson = ABTJson::Ok();
     TArray<TSharedPtr<FJsonValue>> Assets;
