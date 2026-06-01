@@ -191,6 +191,16 @@ namespace ABT::Blueprint::Ops
             FBlueprintEditorUtils::AddMemberVariable(Blueprint, *Name, MakePinTypeFromString(Type));
             OutMessages.Add(FString::Printf(TEXT("Added variable %s"), *Name));
         }
+        if (ABTJson::GetBool(Op, TEXT("editable"), false) || ABTJson::GetBool(Op, TEXT("instanceEditable"), false))
+        {
+            FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(Blueprint, *Name, false);
+            OutMessages.Add(FString::Printf(TEXT("Made variable %s instance editable"), *Name));
+        }
+        if (ABTJson::GetBool(Op, TEXT("exposeOnSpawn"), false))
+        {
+            FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, *Name, nullptr, FBlueprintMetadata::MD_ExposeOnSpawn, TEXT("true"));
+            OutMessages.Add(FString::Printf(TEXT("Exposed variable %s on spawn"), *Name));
+        }
         return true;
     }
 

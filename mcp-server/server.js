@@ -60,7 +60,7 @@ const server = new McpServer({
 server.registerTool(
   "ping_ue_bridge",
   {
-    description: "Check whether the UE5 AgentBlueprintTools localhost bridge is alive.",
+    description: "Check whether the AgentBlueprintTools localhost bridge is alive.",
     inputSchema: z.object({})
   },
   async () => textResult(await callBridge("/v1/health", undefined, "GET"))

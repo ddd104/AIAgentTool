@@ -661,6 +661,167 @@ namespace
         return LoadObject<UClass>(nullptr, *(ObjectPath + TEXT("_C")));
     }
 
+    UObject* LoadObjectValueForProperty(FObjectProperty* ObjectProperty, const FString& RawPath)
+    {
+        if (!ObjectProperty || RawPath.IsEmpty())
+        {
+            return nullptr;
+        }
+
+        if (UObject* Object = LoadObject<UObject>(nullptr, *RawPath))
+        {
+            return Object;
+        }
+
+        if (UObject* Object = LoadObject<UObject>(nullptr, *ToObjectPath(RawPath)))
+        {
+            return Object;
+        }
+
+        return nullptr;
+    }
+
+    bool SetJsonValueOnObject(UObject* Object, const FString& PropertyName, const TSharedPtr<FJsonValue>& Value, FString& OutError)
+    {
+        if (!Object)
+        {
+            OutError = TEXT("object is null");
+            return false;
+        }
+        if (PropertyName.IsEmpty())
+        {
+            OutError = TEXT("property name is empty");
+            return false;
+        }
+        if (!Value.IsValid())
+        {
+            OutError = FString::Printf(TEXT("value missing for property %s"), *PropertyName);
+            return false;
+        }
+
+        FProperty* Property = Object->GetClass()->FindPropertyByName(*PropertyName);
+        if (!Property)
+        {
+            OutError = FString::Printf(TEXT("Property not found on %s: %s"), *Object->GetClass()->GetName(), *PropertyName);
+            return false;
+        }
+
+        void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Object);
+        if (FBoolProperty* Bool = CastField<FBoolProperty>(Property))
+        {
+            Bool->SetPropertyValue(ValuePtr, Value->AsBool());
+            return true;
+        }
+        if (FNumericProperty* Number = CastField<FNumericProperty>(Property))
+        {
+            if (Number->IsInteger())
+            {
+                Number->SetIntPropertyValue(ValuePtr, static_cast<int64>(Value->AsNumber()));
+            }
+            else
+            {
+                Number->SetFloatingPointPropertyValue(ValuePtr, Value->AsNumber());
+            }
+            return true;
+        }
+        if (FStrProperty* String = CastField<FStrProperty>(Property))
+        {
+            String->SetPropertyValue(ValuePtr, Value->AsString());
+            return true;
+        }
+        if (FNameProperty* Name = CastField<FNameProperty>(Property))
+        {
+            Name->SetPropertyValue(ValuePtr, *Value->AsString());
+            return true;
+        }
+        if (FTextProperty* Text = CastField<FTextProperty>(Property))
+        {
+            Text->SetPropertyValue(ValuePtr, FText::FromString(Value->AsString()));
+            return true;
+        }
+        if (FEnumProperty* Enum = CastField<FEnumProperty>(Property))
+        {
+            const int64 EnumValue = Enum->GetEnum()->GetValueByNameString(Value->AsString());
+            if (EnumValue == INDEX_NONE)
+            {
+                OutError = FString::Printf(TEXT("Invalid enum value '%s' for %s"), *Value->AsString(), *PropertyName);
+                return false;
+            }
+            Enum->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, EnumValue);
+            return true;
+        }
+        if (FByteProperty* Byte = CastField<FByteProperty>(Property))
+        {
+            if (Byte->Enum)
+            {
+                const int64 EnumValue = Byte->Enum->GetValueByNameString(Value->AsString());
+                if (EnumValue == INDEX_NONE)
+                {
+                    OutError = FString::Printf(TEXT("Invalid enum value '%s' for %s"), *Value->AsString(), *PropertyName);
+                    return false;
+                }
+                Byte->SetPropertyValue(ValuePtr, static_cast<uint8>(EnumValue));
+            }
+            else
+            {
+                Byte->SetPropertyValue(ValuePtr, static_cast<uint8>(Value->AsNumber()));
+            }
+            return true;
+        }
+        if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
+        {
+            UObject* Referenced = nullptr;
+            const FString ObjectPath = Value->AsString();
+            if (!ObjectPath.IsEmpty())
+            {
+                Referenced = LoadObjectValueForProperty(ObjectProperty, ObjectPath);
+                if (!Referenced)
+                {
+                    OutError = FString::Printf(TEXT("Could not load object value: %s"), *ObjectPath);
+                    return false;
+                }
+                if (!Referenced->IsA(ObjectProperty->PropertyClass))
+                {
+                    OutError = FString::Printf(TEXT("Object value is not a %s: %s"), *ObjectProperty->PropertyClass->GetName(), *ObjectPath);
+                    return false;
+                }
+            }
+            ObjectProperty->SetObjectPropertyValue(ValuePtr, Referenced);
+            return true;
+        }
+
+        OutError = FString::Printf(TEXT("Unsupported property type for %s: %s"), *PropertyName, *Property->GetClass()->GetName());
+        return false;
+    }
+
+    bool ApplyUserWidgetInstanceProperties(UUserWidget* UserWidget, const TSharedPtr<FJsonObject>& Spec, FString& OutError)
+    {
+        if (!UserWidget || !Spec.IsValid())
+        {
+            return true;
+        }
+
+        const TSharedPtr<FJsonObject>* Properties = nullptr;
+        if (!Spec->TryGetObjectField(TEXT("properties"), Properties))
+        {
+            Spec->TryGetObjectField(TEXT("instanceProperties"), Properties);
+        }
+        if (!Properties || !Properties->IsValid())
+        {
+            return true;
+        }
+
+        UserWidget->Modify();
+        for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Properties)->Values)
+        {
+            if (!SetJsonValueOnObject(UserWidget, Pair.Key, Pair.Value, OutError))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     void ApplyCommonWidgetProperties(UWidget* Widget, const TSharedPtr<FJsonObject>& Spec)
     {
         if (!Widget || !Spec.IsValid())
@@ -790,6 +951,11 @@ namespace
             {
                 Spacer->SetSize(Size);
             }
+        }
+
+        if (UUserWidget* UserWidget = Cast<UUserWidget>(Widget))
+        {
+            return ApplyUserWidgetInstanceProperties(UserWidget, Spec, OutError);
         }
 
         return true;

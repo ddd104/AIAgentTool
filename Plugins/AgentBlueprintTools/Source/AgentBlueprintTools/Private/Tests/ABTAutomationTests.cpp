@@ -353,7 +353,7 @@ bool FABTAssetBlueprintMaterialRoundTripTest::RunTest(const FString& Parameters)
     TestTrue(TEXT("Struct includes Speed field"), JsonArrayContainsObjectString(Json, TEXT("fields"), TEXT("name"), TEXT("Speed")));
 
     TSharedPtr<FJsonObject> WidgetRequest = MakeCreateAssetRequest(TEXT("WidgetBlueprint"), TestWidgetPath);
-    WidgetRequest->SetStringField(TEXT("parentClass"), TEXT("/Script/AIAgentTool.ABTButtonPagesWidget"));
+    WidgetRequest->SetStringField(TEXT("parentClass"), TEXT("/Script/V25Object.ABTButtonPagesWidget"));
     TestTrue(TEXT("Create Widget Blueprint asset"), FABTAssetTools::CreateAsset(WidgetRequest, Json, Error));
     const FString WidgetPath = ABTJson::GetString(Json, TEXT("asset_path"));
 

@@ -4,6 +4,7 @@
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
+#include "Engine/Texture2D.h"
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -37,6 +38,12 @@ namespace ABT::Blueprint
         else if (TypeName.Equals(TEXT("text"), ESearchCase::IgnoreCase))
         {
             PinType.PinCategory = UEdGraphSchema_K2::PC_Text;
+        }
+        else if (TypeName.Equals(TEXT("Texture2D"), ESearchCase::IgnoreCase) ||
+            TypeName.Equals(TEXT("texture"), ESearchCase::IgnoreCase))
+        {
+            PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+            PinType.PinSubCategoryObject = UTexture2D::StaticClass();
         }
         else
         {
