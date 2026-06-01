@@ -13,4 +13,5 @@ namespace ABT::Blueprint::Ops
     bool EnsureComponent(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError);
     bool SetStaticMesh(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError);
     bool SetComponentMaterial(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError);
+    bool ConfigureInteractableActor(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Op, TArray<FString>& OutMessages, FString& OutError);
 }

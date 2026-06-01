@@ -20,6 +20,10 @@
 #include "Components/MeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/Widget.h"
+#include "Curves/CurveFloat.h"
+#include "Curves/CurveLinearColor.h"
+#include "Curves/CurveVector.h"
+#include "Curves/RichCurve.h"
 #include "EditorAssetLibrary.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
@@ -29,6 +33,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
+#include "Engine/TimelineTemplate.h"
 #include "GameFramework/Actor.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_CustomEvent.h"
@@ -129,6 +134,17 @@ namespace
                 OutMessages.Add(TEXT("remove_node.node or remove_node.target is required."));
             }
         }
+        else if (OpName == TEXT("layout_blueprint_graph"))
+        {
+            // graph defaults to EventGraph; nodes is optional so callers can run overlap cleanup only.
+        }
+        else if (OpName == TEXT("configure_timeline"))
+        {
+            if (!HasField(Op, TEXT("name")) && !HasField(Op, TEXT("timeline")))
+            {
+                OutMessages.Add(TEXT("configure_timeline.name or configure_timeline.timeline is required."));
+            }
+        }
         else if (OpName == TEXT("set_blueprint_property"))
         {
             RequireField(Op, OpName, TEXT("property"), OutMessages);
@@ -144,6 +160,10 @@ namespace
         else if (OpName == TEXT("ensure_looping_move"))
         {
             // function is optional here; the op defaults to MoveByDelta.
+        }
+        else if (OpName == TEXT("configure_interactable_actor"))
+        {
+            // Mesh, collision, prompt, key, timeline, and rotation fields all have reusable defaults.
         }
         else if (OpName == TEXT("configure_button_pages_widget"))
         {
@@ -185,6 +205,86 @@ namespace
         Array.Add(MakeShared<FJsonValueNumber>(Value.B));
         Array.Add(MakeShared<FJsonValueNumber>(Value.A));
         return MakeShared<FJsonValueArray>(Array);
+    }
+
+    TSharedPtr<FJsonValue> VectorValue(const FVector& Value)
+    {
+        TArray<TSharedPtr<FJsonValue>> Array;
+        Array.Add(MakeShared<FJsonValueNumber>(Value.X));
+        Array.Add(MakeShared<FJsonValueNumber>(Value.Y));
+        Array.Add(MakeShared<FJsonValueNumber>(Value.Z));
+        return MakeShared<FJsonValueArray>(Array);
+    }
+
+    TArray<TSharedPtr<FJsonValue>> ExportFloatCurveKeys(const FRichCurve& Curve)
+    {
+        TArray<TSharedPtr<FJsonValue>> Keys;
+        for (const FRichCurveKey& Key : Curve.GetConstRefOfKeys())
+        {
+            TSharedPtr<FJsonObject> KeyJson = ABTJson::Object();
+            KeyJson->SetNumberField(TEXT("time"), Key.Time);
+            KeyJson->SetNumberField(TEXT("value"), Key.Value);
+            Keys.Add(ABTJson::ObjectValue(KeyJson));
+        }
+        return Keys;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> ExportVectorCurveKeys(const UCurveVector* Curve)
+    {
+        TArray<TSharedPtr<FJsonValue>> Keys;
+        if (!Curve)
+        {
+            return Keys;
+        }
+
+        TSet<float> Times;
+        for (int32 ComponentIndex = 0; ComponentIndex < 3; ++ComponentIndex)
+        {
+            for (const FRichCurveKey& Key : Curve->FloatCurves[ComponentIndex].GetConstRefOfKeys())
+            {
+                Times.Add(Key.Time);
+            }
+        }
+
+        TArray<float> SortedTimes = Times.Array();
+        SortedTimes.Sort();
+        for (float Time : SortedTimes)
+        {
+            TSharedPtr<FJsonObject> KeyJson = ABTJson::Object();
+            KeyJson->SetNumberField(TEXT("time"), Time);
+            KeyJson->SetField(TEXT("value"), VectorValue(Curve->GetVectorValue(Time)));
+            Keys.Add(ABTJson::ObjectValue(KeyJson));
+        }
+        return Keys;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> ExportColorCurveKeys(const UCurveLinearColor* Curve)
+    {
+        TArray<TSharedPtr<FJsonValue>> Keys;
+        if (!Curve)
+        {
+            return Keys;
+        }
+
+        TSet<float> Times;
+        for (int32 ComponentIndex = 0; ComponentIndex < 4; ++ComponentIndex)
+        {
+            for (const FRichCurveKey& Key : Curve->FloatCurves[ComponentIndex].GetConstRefOfKeys())
+            {
+                Times.Add(Key.Time);
+            }
+        }
+
+        TArray<float> SortedTimes = Times.Array();
+        SortedTimes.Sort();
+        for (float Time : SortedTimes)
+        {
+            TSharedPtr<FJsonObject> KeyJson = ABTJson::Object();
+            KeyJson->SetNumberField(TEXT("time"), Time);
+            KeyJson->SetField(TEXT("value"), ColorValue(Curve->GetLinearColorValue(Time)));
+            Keys.Add(ABTJson::ObjectValue(KeyJson));
+        }
+        return Keys;
     }
 
     FString BrushResourcePath(const FSlateBrush& Brush)
@@ -702,6 +802,72 @@ bool FABTBlueprintTools::ExportBlueprint(const FString& AssetPath, TSharedPtr<FJ
     }
     OutJson->SetArrayField(TEXT("components"), Components);
 
+    TArray<TSharedPtr<FJsonValue>> Timelines;
+    for (UTimelineTemplate* Timeline : Blueprint->Timelines)
+    {
+        if (!Timeline)
+        {
+            continue;
+        }
+
+        TSharedPtr<FJsonObject> TimelineJson = ABTJson::Object();
+        TimelineJson->SetStringField(TEXT("name"), Timeline->GetVariableName().ToString());
+        TimelineJson->SetNumberField(TEXT("length"), Timeline->TimelineLength);
+        TimelineJson->SetBoolField(TEXT("autoplay"), Timeline->bAutoPlay);
+        TimelineJson->SetBoolField(TEXT("loop"), Timeline->bLoop);
+
+        TArray<TSharedPtr<FJsonValue>> FloatTracks;
+        for (const FTTFloatTrack& Track : Timeline->FloatTracks)
+        {
+            TSharedPtr<FJsonObject> TrackJson = ABTJson::Object();
+            TrackJson->SetStringField(TEXT("name"), Track.GetTrackName().ToString());
+            TrackJson->SetBoolField(TEXT("external_curve"), Track.bIsExternalCurve);
+            TrackJson->SetStringField(TEXT("curve"), Track.CurveFloat ? Track.CurveFloat->GetPathName() : TEXT(""));
+            TrackJson->SetArrayField(TEXT("keys"), Track.CurveFloat ? ExportFloatCurveKeys(Track.CurveFloat->FloatCurve) : TArray<TSharedPtr<FJsonValue>>());
+            FloatTracks.Add(ABTJson::ObjectValue(TrackJson));
+        }
+        TimelineJson->SetArrayField(TEXT("float_tracks"), FloatTracks);
+
+        TArray<TSharedPtr<FJsonValue>> VectorTracks;
+        for (const FTTVectorTrack& Track : Timeline->VectorTracks)
+        {
+            TSharedPtr<FJsonObject> TrackJson = ABTJson::Object();
+            TrackJson->SetStringField(TEXT("name"), Track.GetTrackName().ToString());
+            TrackJson->SetBoolField(TEXT("external_curve"), Track.bIsExternalCurve);
+            TrackJson->SetStringField(TEXT("curve"), Track.CurveVector ? Track.CurveVector->GetPathName() : TEXT(""));
+            TrackJson->SetArrayField(TEXT("keys"), ExportVectorCurveKeys(Track.CurveVector));
+            VectorTracks.Add(ABTJson::ObjectValue(TrackJson));
+        }
+        TimelineJson->SetArrayField(TEXT("vector_tracks"), VectorTracks);
+
+        TArray<TSharedPtr<FJsonValue>> EventTracks;
+        for (const FTTEventTrack& Track : Timeline->EventTracks)
+        {
+            TSharedPtr<FJsonObject> TrackJson = ABTJson::Object();
+            TrackJson->SetStringField(TEXT("name"), Track.GetTrackName().ToString());
+            TrackJson->SetStringField(TEXT("function"), Track.GetFunctionName().ToString());
+            TrackJson->SetBoolField(TEXT("external_curve"), Track.bIsExternalCurve);
+            TrackJson->SetStringField(TEXT("curve"), Track.CurveKeys ? Track.CurveKeys->GetPathName() : TEXT(""));
+            TrackJson->SetArrayField(TEXT("keys"), Track.CurveKeys ? ExportFloatCurveKeys(Track.CurveKeys->FloatCurve) : TArray<TSharedPtr<FJsonValue>>());
+            EventTracks.Add(ABTJson::ObjectValue(TrackJson));
+        }
+        TimelineJson->SetArrayField(TEXT("event_tracks"), EventTracks);
+
+        TArray<TSharedPtr<FJsonValue>> ColorTracks;
+        for (const FTTLinearColorTrack& Track : Timeline->LinearColorTracks)
+        {
+            TSharedPtr<FJsonObject> TrackJson = ABTJson::Object();
+            TrackJson->SetStringField(TEXT("name"), Track.GetTrackName().ToString());
+            TrackJson->SetBoolField(TEXT("external_curve"), Track.bIsExternalCurve);
+            TrackJson->SetStringField(TEXT("curve"), Track.CurveLinearColor ? Track.CurveLinearColor->GetPathName() : TEXT(""));
+            TrackJson->SetArrayField(TEXT("keys"), ExportColorCurveKeys(Track.CurveLinearColor));
+            ColorTracks.Add(ABTJson::ObjectValue(TrackJson));
+        }
+        TimelineJson->SetArrayField(TEXT("color_tracks"), ColorTracks);
+        Timelines.Add(ABTJson::ObjectValue(TimelineJson));
+    }
+    OutJson->SetArrayField(TEXT("timelines"), Timelines);
+
     if (UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(Blueprint))
     {
         TArray<TSharedPtr<FJsonValue>> Widgets;
@@ -989,6 +1155,11 @@ bool FABTBlueprintTools::ApplyOperation(UBlueprint* Blueprint, const TSharedPtr<
         return ABT::Blueprint::Ops::EnsureLoopingMove(Blueprint, Op, OutMessages, OutError);
     }
 
+    if (OpName == TEXT("configure_interactable_actor"))
+    {
+        return ABT::Blueprint::Ops::ConfigureInteractableActor(Blueprint, Op, OutMessages, OutError);
+    }
+
     if (OpName == TEXT("ensure_component"))
     {
         return ABT::Blueprint::Ops::EnsureComponent(Blueprint, Op, OutMessages, OutError);
@@ -1037,6 +1208,16 @@ bool FABTBlueprintTools::ApplyOperation(UBlueprint* Blueprint, const TSharedPtr<
     if (OpName == TEXT("remove_node"))
     {
         return ABT::Blueprint::Ops::RemoveNode(Blueprint, Op, NodeMap, OutMessages, OutError);
+    }
+
+    if (OpName == TEXT("layout_blueprint_graph"))
+    {
+        return ABT::Blueprint::Ops::LayoutGraphNodes(Blueprint, Op, NodeMap, OutMessages, OutError);
+    }
+
+    if (OpName == TEXT("configure_timeline"))
+    {
+        return ABT::Blueprint::Ops::ConfigureTimeline(Blueprint, Op, NodeMap, OutMessages, OutError);
     }
 
     if (OpName == TEXT("set_blueprint_property"))

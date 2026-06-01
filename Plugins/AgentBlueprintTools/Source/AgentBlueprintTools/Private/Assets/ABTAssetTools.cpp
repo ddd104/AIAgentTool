@@ -17,6 +17,7 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Factories/MaterialInstanceConstantFactoryNew.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "ScopedTransaction.h"
 #include "StructUtils/UserDefinedStruct.h"
@@ -635,6 +636,21 @@ bool FABTAssetTools::PlaceActor(const TSharedPtr<FJsonObject>& Request, TSharedP
     {
         OutError = FString::Printf(TEXT("Asset is not an Actor class or Blueprint: %s"), *AssetPath);
         return false;
+    }
+
+    const FString LevelPath = ABTJson::GetString(Request, TEXT("levelPath"));
+    if (!LevelPath.IsEmpty())
+    {
+        FString MapFilename = LevelPath;
+        if (FPackageName::IsValidLongPackageName(LevelPath))
+        {
+            MapFilename = FPackageName::LongPackageNameToFilename(LevelPath, FPackageName::GetMapPackageExtension());
+        }
+        if (!FEditorFileUtils::LoadMap(MapFilename, false, true))
+        {
+            OutError = FString::Printf(TEXT("Failed to load level for placement: %s"), *LevelPath);
+            return false;
+        }
     }
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;

@@ -8,7 +8,7 @@ network_access = false
 
 [mcp_servers.ue5_agent_blueprint_tools]
 command = "node"
-args = ["mcp-server/server.js"]
+args = ["AgentTools/AgentBlueprintTools/mcp-server/server.js"]
 cwd = "."
 enabled = true
 startup_timeout_sec = 20
@@ -16,10 +16,10 @@ tool_timeout_sec = 180
 env = { ABT_BRIDGE_URL = "http://127.0.0.1:31055", ABT_BRIDGE_TOKEN = "change-me-local" }
 
 # ProjectGraph MCP server. Disabled by default; set enabled=true after running
-# `npm install && npm run build` in ProjectGraph.
+# `npm install && npm run build:project-graph` in AgentTools.
 [mcp_servers.ue_project_graph]
 command = "node"
-args = ["ProjectGraph/dist/src/mcpServer.js"]
+args = ["AgentTools/AgentProjectGraph/ProjectGraph/dist/src/mcpServer.js"]
 cwd = "."
 enabled = false
 startup_timeout_sec = 20
@@ -40,7 +40,7 @@ enabled_tools = [
 # ue5-agent-blueprint-tools-mcp server above remains the active bridge today.
 [mcp_servers.ue_editor]
 command = "node"
-args = ["mcp-server/server.js"]
+args = ["AgentTools/AgentBlueprintTools/mcp-server/server.js"]
 cwd = "."
 enabled = false
 startup_timeout_sec = 20
@@ -48,7 +48,7 @@ tool_timeout_sec = 180
 env = { ABT_BRIDGE_URL = "http://127.0.0.1:31055", ABT_BRIDGE_TOKEN = "change-me-local" }
 enabled_tools = [
   "read_blueprint",
-  "analyze_blueprint",
+  "analyze_blueprint_graph",
   "dry_run_blueprint_patch",
   "apply_blueprint_patch",
   "compile_blueprint",

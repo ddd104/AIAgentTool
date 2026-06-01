@@ -1,0 +1,16 @@
+{
+  "name": "ue-agent-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "AgentBlueprintTools/mcp-server",
+    "AgentProjectGraph/ProjectGraph"
+  ],
+  "scripts": {
+    "build:project-graph": "npm --workspace ue-project-graph run build",
+    "test:project-graph": "npm --workspace ue-project-graph test",
+    "mcp:blueprint": "node AgentBlueprintTools/mcp-server/server.js",
+    "mcp:project-graph": "node AgentProjectGraph/ProjectGraph/dist/src/mcpServer.js"
+  }
+}

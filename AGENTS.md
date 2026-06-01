@@ -16,6 +16,8 @@
 
 - `Source/`
 - `Plugins/AgentBlueprintTools/`
+- `Plugins/AgentProjectGraph/`
+- `AgentTools/`
 - `Config/`，仅当任务涉及配置
 - `Content/`
 
@@ -60,4 +62,4 @@
 - 蓝图、材质和资产修改必须使用 `ue_editor` MCP tools、`ue5_agent_blueprint_tools` MCP server 或项目认可的 patch DSL；先 read/analyze，再 dry-run，再 apply，最后验证。
 
 # 架构设计
-阅读 ArchitectureDesign.md
+阅读 `AgentTools/AgentBlueprintTools/docs/ARCHITECTURE_DESIGN.md` 和 `AgentTools/README.md`

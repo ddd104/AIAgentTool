@@ -92,3 +92,9 @@ Script/Binds.Cache.Headers
 .vscode/
 AIAgentTool.sln
 .ai/
+AgentTools/node_modules/
+AgentTools/*/ProjectGraph/.ai/
+AgentTools/*/ProjectGraph/dist/
+AgentTools/*/ProjectGraph/node_modules/
+AgentTools/*/mcp-server/node_modules/
+dist/
