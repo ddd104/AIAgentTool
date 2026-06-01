@@ -1,0 +1,317 @@
+import { readdir, readFile, stat } from "node:fs/promises";
+import path from "node:path";
+import { symbolNodeId, toProjectPath, type GraphStore } from "../graph/graphStore.js";
+import type { NodeRecord, NodeType } from "../graph/schema.js";
+
+type JsonObject = Record<string, unknown>;
+
+export interface UeEditorIndexerOptions {
+  projectRoot: string;
+  cacheRoot?: string;
+}
+
+export interface UeEditorIndexerResult {
+  blueprintFiles: number;
+  assetRegistryFiles: number;
+  materialFiles: number;
+  warnings: string[];
+}
+
+function isObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function assetLeaf(assetPath: string): string {
+  const last = assetPath.split(/[/.]/).filter(Boolean).at(-1);
+  return last || assetPath || "asset";
+}
+
+function normalizeAssetPath(assetPath: string): string {
+  if (!assetPath) return "";
+  const slash = assetPath.lastIndexOf("/");
+  const dot = assetPath.lastIndexOf(".");
+  if (dot > slash) {
+    return assetPath.slice(0, dot);
+  }
+  return assetPath;
+}
+
+function safeMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined));
+}
+
+function addNode(
+  store: GraphStore,
+  type: NodeType,
+  name: string,
+  nodePath: string,
+  summary: string,
+  metadata: Record<string, unknown> = {}
+): NodeRecord {
+  const system = nodePath.startsWith("/Game") ? "Content" : "UE";
+  return store.addNode({
+    id: symbolNodeId(type, name || nodePath || type, nodePath || "ue-cache"),
+    type,
+    name: name || assetLeaf(nodePath),
+    path: nodePath,
+    system,
+    language: "UnrealAsset",
+    summary,
+    metadata: safeMetadata({
+      source: "ue-cache",
+      ...metadata
+    })
+  });
+}
+
+function classifyAsset(assetPath: string, assetClass: string): NodeType {
+  const loweredClass = assetClass.toLowerCase();
+  const loweredPath = assetPath.toLowerCase();
+  if (loweredClass.includes("materialinstance")) return "Asset";
+  if (loweredClass.includes("material")) return "Material";
+  if (loweredClass.includes("widgetblueprint") || loweredPath.includes("/ui/") || loweredPath.includes("/widget")) return "Widget";
+  if (loweredClass.includes("world") || loweredClass.includes("level") || loweredPath.endsWith("_map")) return "Level";
+  if (loweredClass.includes("dataasset") || loweredPath.includes("dataasset")) return "DataAsset";
+  if (loweredClass.includes("blueprint")) return "Blueprint";
+  return "Asset";
+}
+
+async function readJsonFiles(directory: string): Promise<Array<{ filePath: string; json: unknown }>> {
+  try {
+    await stat(directory);
+  } catch {
+    return [];
+  }
+
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files: Array<{ filePath: string; json: unknown }> = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+    const filePath = path.join(directory, entry.name);
+    const text = decodeJsonText(await readFile(filePath));
+    files.push({ filePath, json: JSON.parse(text) as unknown });
+  }
+  return files;
+}
+
+function decodeJsonText(buffer: Buffer): string {
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.subarray(2).toString("utf16le");
+  }
+
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.subarray(3).toString("utf8");
+  }
+
+  if (buffer.length >= 4 && buffer[1] === 0x00 && buffer[3] === 0x00) {
+    return buffer.toString("utf16le");
+  }
+
+  return buffer.toString("utf8");
+}
+
+function unwrapBlueprintJson(value: unknown): JsonObject | undefined {
+  if (!isObject(value)) return undefined;
+  const nested = value.blueprint;
+  if (isObject(nested)) return nested;
+  if (typeof value.assetPath === "string" && typeof value.blueprintName === "string") return value;
+  return undefined;
+}
+
+function unwrapMaterialJson(value: unknown): JsonObject | undefined {
+  if (!isObject(value)) return undefined;
+  const nested = value.material;
+  if (isObject(nested)) return nested;
+  if (typeof value.assetPath === "string" && (typeof value.materialDomain === "string" || Array.isArray(value.expressions))) return value;
+  return undefined;
+}
+
+function assetObjectsFromJson(value: unknown): JsonObject[] {
+  if (!isObject(value)) return [];
+  if (Array.isArray(value.assets)) return value.assets.filter(isObject);
+  if (typeof value.assetPath === "string" && typeof value.assetClass === "string") return [value];
+  return [];
+}
+
+function indexFunctionLike(store: GraphStore, blueprintNode: NodeRecord, functionLike: unknown): void {
+  if (!isObject(functionLike)) return;
+  const name = asString(functionLike.name) || asString(functionLike.function) || asString(functionLike.nodeTitle);
+  if (!name) return;
+  const functionNode = addNode(
+    store,
+    "Function",
+    name,
+    blueprintNode.path,
+    `Blueprint function ${name} on ${blueprintNode.name}`,
+    { blueprint: blueprintNode.path, raw: functionLike }
+  );
+  store.addEdge({ from: blueprintNode.id, to: functionNode.id, type: "HAS_FUNCTION", metadata: { source: "ue-cache" } });
+}
+
+function indexVariable(store: GraphStore, blueprintNode: NodeRecord, variable: unknown): void {
+  if (!isObject(variable)) return;
+  const name = asString(variable.name);
+  if (!name) return;
+  const variableNode = addNode(
+    store,
+    "Variable",
+    name,
+    blueprintNode.path,
+    `Blueprint variable ${name} on ${blueprintNode.name}`,
+    { blueprint: blueprintNode.path, raw: variable }
+  );
+  store.addEdge({ from: blueprintNode.id, to: variableNode.id, type: "HAS_VARIABLE", metadata: { source: "ue-cache" } });
+}
+
+function indexComponent(store: GraphStore, blueprintNode: NodeRecord, component: unknown): void {
+  if (!isObject(component)) return;
+  const name = asString(component.name) || asString(component.componentClass);
+  if (!name) return;
+  const componentNode = addNode(
+    store,
+    "Component",
+    name,
+    blueprintNode.path,
+    `Blueprint component ${name} on ${blueprintNode.name}`,
+    { blueprint: blueprintNode.path, componentClass: component.componentClass, raw: component }
+  );
+  store.addEdge({ from: blueprintNode.id, to: componentNode.id, type: "HAS_COMPONENT", metadata: { source: "ue-cache" } });
+}
+
+function indexBlueprint(store: GraphStore, blueprint: JsonObject): void {
+  const assetPath = normalizeAssetPath(asString(blueprint.assetPath));
+  const blueprintName = asString(blueprint.blueprintName) || assetLeaf(assetPath);
+  if (!assetPath) return;
+
+  const blueprintNode = addNode(store, "Blueprint", blueprintName, assetPath, `Blueprint ${blueprintName}`, {
+    parentClass: blueprint.parentClass,
+    generatedClass: blueprint.generatedClass,
+    implementedInterfaces: blueprint.implementedInterfaces
+  });
+
+  const parentClass = asString(blueprint.parentClass);
+  if (parentClass) {
+    const parentNode = addNode(store, "Class", assetLeaf(parentClass), parentClass, `Blueprint parent class ${parentClass}`, { source: "ue-cache" });
+    store.addEdge({ from: blueprintNode.id, to: parentNode.id, type: "PARENT_CLASS", metadata: { source: "ue-cache" } });
+  }
+
+  for (const variable of asArray(blueprint.variables)) indexVariable(store, blueprintNode, variable);
+  for (const component of asArray(blueprint.components)) indexComponent(store, blueprintNode, component);
+  for (const graph of asArray(blueprint.functions)) indexFunctionLike(store, blueprintNode, graph);
+  for (const graph of asArray(blueprint.eventGraphs)) indexFunctionLike(store, blueprintNode, graph);
+  for (const call of asArray(blueprint.calledFunctions)) indexFunctionLike(store, blueprintNode, call);
+
+  for (const referenced of asArray(blueprint.referencedAssets)) {
+    const refPath = normalizeAssetPath(asString(referenced));
+    if (!refPath) continue;
+    const refNode = addNode(store, "Asset", assetLeaf(refPath), refPath, `Referenced asset ${refPath}`, { source: "ue-cache" });
+    store.addEdge({ from: blueprintNode.id, to: refNode.id, type: "REFERENCES_ASSET", metadata: { source: "ue-cache" } });
+  }
+}
+
+function indexAsset(store: GraphStore, asset: JsonObject): void {
+  const assetPath = normalizeAssetPath(asString(asset.assetPath));
+  if (!assetPath) return;
+  const assetClass = asString(asset.assetClass);
+  const nodeType = classifyAsset(assetPath, assetClass);
+  const assetNode = addNode(store, nodeType, assetLeaf(assetPath), assetPath, `${nodeType} asset ${assetPath}`, {
+    assetClass,
+    packageName: asset.packageName
+  });
+
+  for (const dependency of asArray(asset.dependencies)) {
+    const dependencyPath = normalizeAssetPath(asString(dependency));
+    if (!dependencyPath) continue;
+    const dependencyNode = addNode(store, "Asset", assetLeaf(dependencyPath), dependencyPath, `Asset dependency ${dependencyPath}`, {
+      source: "ue-cache"
+    });
+    store.addEdge({ from: assetNode.id, to: dependencyNode.id, type: "DEPENDS_ON", metadata: { source: "ue-cache" } });
+  }
+
+  const parentMaterial =
+    asString(asset.parentMaterial) ||
+    asString(asset.parent) ||
+    asString(asset.metadata && isObject(asset.metadata) ? asset.metadata.parentMaterial : undefined);
+  if (parentMaterial && assetClass.toLowerCase().includes("materialinstance")) {
+    const materialNode = addNode(store, "Material", assetLeaf(parentMaterial), normalizeAssetPath(parentMaterial), `Parent material ${parentMaterial}`);
+    store.addEdge({ from: assetNode.id, to: materialNode.id, type: "INSTANCE_OF_MATERIAL", metadata: { source: "ue-cache" } });
+  }
+}
+
+function indexMaterial(store: GraphStore, material: JsonObject): void {
+  const assetPath = normalizeAssetPath(asString(material.assetPath));
+  if (!assetPath) return;
+  const materialNode = addNode(store, "Material", assetLeaf(assetPath), assetPath, `Material ${assetPath}`, {
+    materialDomain: material.materialDomain,
+    blendMode: material.blendMode,
+    shadingModel: material.shadingModel,
+    expressionCount: asArray(material.expressions).length
+  });
+
+  for (const expression of asArray(material.expressions)) {
+    if (!isObject(expression)) continue;
+    const caption = Array.isArray(expression.caption) ? expression.caption.map(String).join(" ") : "";
+    const referencedAsset = asString(expression.texture) || asString(expression.assetPath) || asString(expression.referencedAsset);
+    if (!referencedAsset) continue;
+    const assetNode = addNode(store, "Asset", assetLeaf(referencedAsset), normalizeAssetPath(referencedAsset), `Material referenced asset ${referencedAsset}`, {
+      expression: expression.name,
+      caption
+    });
+    store.addEdge({ from: materialNode.id, to: assetNode.id, type: "REFERENCES_ASSET", metadata: { source: "ue-cache" } });
+  }
+}
+
+export async function indexUeEditorCache(options: UeEditorIndexerOptions, store: GraphStore): Promise<UeEditorIndexerResult> {
+  const cacheRoot = path.resolve(options.projectRoot, options.cacheRoot ?? ".ai/cache");
+  const warnings: string[] = [];
+  let blueprintFiles = 0;
+  let assetRegistryFiles = 0;
+  let materialFiles = 0;
+
+  for (const file of await readJsonFiles(path.join(cacheRoot, "blueprint_ir"))) {
+    try {
+      const blueprint = unwrapBlueprintJson(file.json);
+      if (blueprint) {
+        indexBlueprint(store, blueprint);
+        blueprintFiles += 1;
+      }
+    } catch (error) {
+      warnings.push(`Failed to index blueprint cache ${toProjectPath(file.filePath)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  for (const file of await readJsonFiles(path.join(cacheRoot, "asset_registry"))) {
+    try {
+      for (const asset of assetObjectsFromJson(file.json)) {
+        indexAsset(store, asset);
+      }
+      assetRegistryFiles += 1;
+    } catch (error) {
+      warnings.push(`Failed to index asset registry cache ${toProjectPath(file.filePath)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  for (const file of await readJsonFiles(path.join(cacheRoot, "material_ir"))) {
+    try {
+      const material = unwrapMaterialJson(file.json);
+      if (material) {
+        indexMaterial(store, material);
+        materialFiles += 1;
+      }
+    } catch (error) {
+      warnings.push(`Failed to index material cache ${toProjectPath(file.filePath)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return { blueprintFiles, assetRegistryFiles, materialFiles, warnings };
+}

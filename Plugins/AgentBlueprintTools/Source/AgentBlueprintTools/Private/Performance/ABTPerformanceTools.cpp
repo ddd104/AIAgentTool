@@ -712,7 +712,7 @@ namespace
 
             AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.Mobile.FSR.Enabled"), TEXT("1"), TEXT("Keep Android runtime aligned with project-level mobile FSR."), TEXT("low"), AndroidTargets);
             AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.ScreenPercentage"), TEXT("75"), TEXT("Render Android Vulkan at a controlled internal resolution and upscale with mobile FSR."), TEXT("medium"), AndroidTargets);
-            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.Tonemapper.Quality"), TEXT("0"), TEXT("Use the cheapest tonemapper path for Android mobile rendering."), TEXT("medium"), AndroidTargets);
+            AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.Tonemapper.Quality"), TEXT("0"), TEXT("Use the cheapest tonemapper path for Android HMI rendering."), TEXT("medium"), AndroidTargets);
             AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.EyeAdaptationQuality"), TEXT("0"), TEXT("Disable eye adaptation passes on Android."), TEXT("low"), AndroidTargets);
             AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.MotionBlurQuality"), TEXT("0"), TEXT("Disable motion blur passes on Android."), TEXT("low"), AndroidTargets);
             AddDeviceProfileCVarActionIfChanged(Plan, SeenKeys, DeviceProfileFile, AndroidDeviceProfileSection, TEXT("r.AmbientOcclusionLevels"), TEXT("0"), TEXT("Disable ambient occlusion passes on Android."), TEXT("low"), AndroidTargets);

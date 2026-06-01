@@ -1,0 +1,37 @@
+{
+  "assetPath": "/Game/UI/BP_TestWidget.BP_TestWidget",
+  "blueprintName": "BP_TestWidget",
+  "parentClass": "/Script/UMG.UserWidget",
+  "generatedClass": "/Game/UI/BP_TestWidget.BP_TestWidget_C",
+  "implementedInterfaces": [],
+  "variables": [
+    {
+      "name": "TitleText",
+      "pinCategory": "text"
+    }
+  ],
+  "functions": [
+    {
+      "name": "Refresh"
+    }
+  ],
+  "eventGraphs": [
+    {
+      "name": "EventGraph"
+    }
+  ],
+  "components": [
+    {
+      "name": "RootCanvas",
+      "componentClass": "/Script/UMG.CanvasPanel"
+    }
+  ],
+  "referencedAssets": [
+    "/Game/Materials/M_Test"
+  ],
+  "calledFunctions": [
+    {
+      "function": "/Script/UMG.Widget.SetVisibility"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Agent Project Graph",
+  "Description": "Editor-only read-only exporters for ProjectGraph Blueprint, asset registry, and material summaries.",
+  "Category": "Editor",
+  "CanContainContent": false,
+  "EnabledByDefault": true,
+  "IsBetaVersion": true,
+  "Modules": [
+    {
+      "Name": "AgentProjectGraph",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

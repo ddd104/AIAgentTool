@@ -1,0 +1,27 @@
+{
+  "name": "ue-project-graph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "project-graph": "dist/src/cli.js",
+    "project-graph-mcp": "dist/src/mcpServer.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "graph": "node dist/src/cli.js",
+    "mcp": "node dist/src/mcpServer.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}

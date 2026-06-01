@@ -14,3 +14,45 @@ enabled = true
 startup_timeout_sec = 20
 tool_timeout_sec = 180
 env = { ABT_BRIDGE_URL = "http://127.0.0.1:31055", ABT_BRIDGE_TOKEN = "change-me-local" }
+
+# ProjectGraph MCP server. Disabled by default; set enabled=true after running
+# `npm install && npm run build` in ProjectGraph.
+[mcp_servers.ue_project_graph]
+command = "node"
+args = ["ProjectGraph/dist/src/mcpServer.js"]
+cwd = "."
+enabled = false
+startup_timeout_sec = 20
+tool_timeout_sec = 180
+env = { PROJECT_GRAPH_ROOT = "." }
+enabled_tools = [
+  "build_project_graph",
+  "update_project_graph",
+  "find_feature_context",
+  "get_context_pack",
+  "query_graph",
+  "find_asset_references",
+  "find_blueprint_usage",
+  "impact_analysis"
+]
+
+# UE Editor MCP placeholder alias for future editor-facing tools. The existing
+# ue5-agent-blueprint-tools-mcp server above remains the active bridge today.
+[mcp_servers.ue_editor]
+command = "node"
+args = ["mcp-server/server.js"]
+cwd = "."
+enabled = false
+startup_timeout_sec = 20
+tool_timeout_sec = 180
+env = { ABT_BRIDGE_URL = "http://127.0.0.1:31055", ABT_BRIDGE_TOKEN = "change-me-local" }
+enabled_tools = [
+  "read_blueprint",
+  "analyze_blueprint",
+  "dry_run_blueprint_patch",
+  "apply_blueprint_patch",
+  "compile_blueprint",
+  "read_material",
+  "patch_material",
+  "create_asset"
+]
