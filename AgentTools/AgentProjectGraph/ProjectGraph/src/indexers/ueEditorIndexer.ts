@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { symbolNodeId, toProjectPath, type GraphStore } from "../graph/graphStore.js";
 import type { NodeRecord, NodeType } from "../graph/schema.js";
@@ -11,6 +11,8 @@ export interface UeEditorIndexerOptions {
 }
 
 export interface UeEditorIndexerResult {
+  cacheRoot: string;
+  ensuredDirectories: string[];
   blueprintFiles: number;
   assetRegistryFiles: number;
   materialFiles: number;
@@ -273,10 +275,18 @@ function indexMaterial(store: GraphStore, material: JsonObject): void {
 
 export async function indexUeEditorCache(options: UeEditorIndexerOptions, store: GraphStore): Promise<UeEditorIndexerResult> {
   const cacheRoot = path.resolve(options.projectRoot, options.cacheRoot ?? ".ai/cache");
+  const cacheDirectories = ["blueprint_ir", "asset_registry", "material_ir"];
+  const ensuredDirectories: string[] = [];
   const warnings: string[] = [];
   let blueprintFiles = 0;
   let assetRegistryFiles = 0;
   let materialFiles = 0;
+
+  for (const directoryName of cacheDirectories) {
+    const directory = path.join(cacheRoot, directoryName);
+    await mkdir(directory, { recursive: true });
+    ensuredDirectories.push(toProjectPath(directory));
+  }
 
   for (const file of await readJsonFiles(path.join(cacheRoot, "blueprint_ir"))) {
     try {
@@ -313,5 +323,5 @@ export async function indexUeEditorCache(options: UeEditorIndexerOptions, store:
     }
   }
 
-  return { blueprintFiles, assetRegistryFiles, materialFiles, warnings };
+  return { cacheRoot: toProjectPath(cacheRoot), ensuredDirectories, blueprintFiles, assetRegistryFiles, materialFiles, warnings };
 }
