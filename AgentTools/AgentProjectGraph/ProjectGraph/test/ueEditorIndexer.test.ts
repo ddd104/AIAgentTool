@@ -22,11 +22,24 @@ test("ueEditorIndexer builds parent class and asset reference edges from fixture
   assert.ok(edges.some((edge) => edge.type === "REFERENCES_ASSET"));
   assert.ok(edges.some((edge) => edge.type === "HAS_VARIABLE"));
   assert.ok(edges.some((edge) => edge.type === "HAS_FUNCTION"));
+  assert.ok(edges.some((edge) => edge.type === "HAS_MACRO"));
   assert.ok(edges.some((edge) => edge.type === "HAS_COMPONENT"));
   assert.ok(edges.some((edge) => edge.type === "DEPENDS_ON"));
 
   const nodes = store.nodes();
   assert.ok(nodes.some((node) => node.type === "Blueprint" && node.name === "BP_TestWidget"));
+  assert.ok(nodes.some((node) => node.type === "Macro" && node.name === "FormatTitle"));
   assert.ok(nodes.some((node) => node.type === "Widget"));
   assert.ok(nodes.some((node) => node.type === "Material"));
+
+  const refresh = nodes.find((node) => node.type === "Function" && node.name === "Refresh");
+  assert.ok(refresh);
+  assert.equal((refresh.metadata.raw as { nodes?: unknown[] }).nodes?.length, 1);
+
+  const rootCanvas = nodes.find((node) => node.type === "Component" && node.name === "RootCanvas");
+  assert.ok(rootCanvas);
+  assert.equal(
+    ((rootCanvas.metadata.raw as { defaultProperties?: Record<string, string> }).defaultProperties ?? {}).Visibility,
+    "Visible"
+  );
 });

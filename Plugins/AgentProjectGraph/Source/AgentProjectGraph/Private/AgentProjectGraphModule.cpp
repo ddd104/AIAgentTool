@@ -4,9 +4,12 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Containers/StringConv.h"
+#include "Components/ActorComponent.h"
+#include "Components/SceneComponent.h"
 #include "Dom/JsonObject.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
+#include "EdGraph/EdGraphPin.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SCS_Node.h"
 #include "Engine/SimpleConstructionScript.h"
@@ -14,7 +17,12 @@
 #include "HAL/IConsoleManager.h"
 #include "HttpServerRequest.h"
 #include "HttpServerResponse.h"
+#include "K2Node.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_FunctionEntry.h"
+#include "K2Node_FunctionResult.h"
+#include "K2Node_MacroInstance.h"
+#include "K2Node_Variable.h"
 #include "MaterialShaderType.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
@@ -27,6 +35,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "UObject/SoftObjectPath.h"
+#include "UObject/UnrealType.h"
 
 #define LOCTEXT_NAMESPACE "FAgentProjectGraphModule"
 
@@ -86,6 +95,234 @@ namespace
             JsonValues.Add(MakeShared<FJsonValueString>(Value));
         }
         return JsonValues;
+    }
+
+    FString GuidToString(const FGuid& Guid)
+    {
+        return Guid.IsValid() ? Guid.ToString(EGuidFormats::DigitsWithHyphens) : FString();
+    }
+
+    FString PinDirectionToString(EEdGraphPinDirection Direction)
+    {
+        switch (Direction)
+        {
+        case EGPD_Input:
+            return TEXT("Input");
+        case EGPD_Output:
+            return TEXT("Output");
+        default:
+            return TEXT("Unknown");
+        }
+    }
+
+    FString PinContainerTypeToString(EPinContainerType ContainerType)
+    {
+        switch (ContainerType)
+        {
+        case EPinContainerType::None:
+            return TEXT("None");
+        case EPinContainerType::Array:
+            return TEXT("Array");
+        case EPinContainerType::Set:
+            return TEXT("Set");
+        case EPinContainerType::Map:
+            return TEXT("Map");
+        default:
+            return TEXT("Unknown");
+        }
+    }
+
+    bool IsExecPin(const UEdGraphPin* Pin)
+    {
+        return Pin && Pin->PinType.PinCategory == TEXT("exec");
+    }
+
+    TSharedPtr<FJsonObject> PinTypeJson(const FEdGraphPinType& PinType)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        Json->SetStringField(TEXT("category"), PinType.PinCategory.ToString());
+        Json->SetStringField(TEXT("subCategory"), PinType.PinSubCategory.ToString());
+        Json->SetStringField(TEXT("containerType"), PinContainerTypeToString(PinType.ContainerType));
+        Json->SetBoolField(TEXT("isReference"), PinType.bIsReference != 0);
+        Json->SetBoolField(TEXT("isConst"), PinType.bIsConst != 0);
+        Json->SetBoolField(TEXT("isWeakPointer"), PinType.bIsWeakPointer != 0);
+        Json->SetBoolField(TEXT("isUObjectWrapper"), PinType.bIsUObjectWrapper != 0);
+        if (PinType.PinSubCategoryObject.IsValid())
+        {
+            Json->SetStringField(TEXT("subCategoryObject"), PinType.PinSubCategoryObject->GetPathName());
+        }
+        if (!PinType.PinValueType.TerminalCategory.IsNone())
+        {
+            TSharedPtr<FJsonObject> ValueType = MakeShared<FJsonObject>();
+            ValueType->SetStringField(TEXT("category"), PinType.PinValueType.TerminalCategory.ToString());
+            ValueType->SetStringField(TEXT("subCategory"), PinType.PinValueType.TerminalSubCategory.ToString());
+            if (PinType.PinValueType.TerminalSubCategoryObject.IsValid())
+            {
+                ValueType->SetStringField(TEXT("subCategoryObject"), PinType.PinValueType.TerminalSubCategoryObject->GetPathName());
+            }
+            Json->SetObjectField(TEXT("valueType"), ValueType);
+        }
+        return Json;
+    }
+
+    TSharedPtr<FJsonObject> MetadataArrayJson(const TArray<FBPVariableMetaDataEntry>& MetadataArray)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        for (const FBPVariableMetaDataEntry& Entry : MetadataArray)
+        {
+            Json->SetStringField(Entry.DataKey.ToString(), Entry.DataValue);
+        }
+        return Json;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> PinArrayJson(const TArray<UEdGraphPin*>& Pins);
+
+    TSharedPtr<FJsonObject> PinConnectionJson(const UEdGraphPin* Pin)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        if (!Pin)
+        {
+            return Json;
+        }
+
+        const UEdGraphNode* OwningNode = Pin->GetOwningNodeUnchecked();
+        Json->SetStringField(TEXT("pinId"), GuidToString(Pin->PinId));
+        Json->SetStringField(TEXT("pinName"), Pin->PinName.ToString());
+        Json->SetStringField(TEXT("direction"), PinDirectionToString(Pin->Direction));
+        if (OwningNode)
+        {
+            Json->SetStringField(TEXT("nodeGuid"), GuidToString(OwningNode->NodeGuid));
+            Json->SetStringField(TEXT("nodeTitle"), OwningNode->GetNodeTitle(ENodeTitleType::ListView).ToString());
+            Json->SetStringField(TEXT("nodeClass"), OwningNode->GetClass()->GetPathName());
+        }
+        return Json;
+    }
+
+    TSharedPtr<FJsonObject> PinJson(const UEdGraphPin* Pin)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        if (!Pin)
+        {
+            return Json;
+        }
+
+        Json->SetStringField(TEXT("pinId"), GuidToString(Pin->PinId));
+        Json->SetStringField(TEXT("persistentGuid"), GuidToString(Pin->PersistentGuid));
+        Json->SetStringField(TEXT("name"), Pin->PinName.ToString());
+#if WITH_EDITORONLY_DATA
+        Json->SetStringField(TEXT("friendlyName"), Pin->PinFriendlyName.ToString());
+#endif
+        Json->SetStringField(TEXT("direction"), PinDirectionToString(Pin->Direction));
+        Json->SetObjectField(TEXT("type"), PinTypeJson(Pin->PinType));
+        Json->SetStringField(TEXT("defaultValue"), Pin->DefaultValue);
+        Json->SetStringField(TEXT("autogeneratedDefaultValue"), Pin->AutogeneratedDefaultValue);
+        Json->SetStringField(TEXT("defaultTextValue"), Pin->DefaultTextValue.ToString());
+        Json->SetBoolField(TEXT("defaultValueIsReadOnly"), Pin->bDefaultValueIsReadOnly != 0);
+        Json->SetBoolField(TEXT("defaultValueIsIgnored"), Pin->bDefaultValueIsIgnored != 0);
+        if (Pin->DefaultObject)
+        {
+            Json->SetStringField(TEXT("defaultObject"), Pin->DefaultObject->GetPathName());
+        }
+
+        TArray<TSharedPtr<FJsonValue>> Connections;
+        for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
+        {
+            if (LinkedPin)
+            {
+                Connections.Add(MakeShared<FJsonValueObject>(PinConnectionJson(LinkedPin)));
+            }
+        }
+        Json->SetArrayField(TEXT("connections"), Connections);
+
+        TArray<TSharedPtr<FJsonValue>> SubPins;
+        for (const UEdGraphPin* SubPin : Pin->SubPins)
+        {
+            if (SubPin)
+            {
+                SubPins.Add(MakeShared<FJsonValueObject>(PinJson(SubPin)));
+            }
+        }
+        Json->SetArrayField(TEXT("subPins"), SubPins);
+        return Json;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> PinArrayJson(const TArray<UEdGraphPin*>& Pins)
+    {
+        TArray<TSharedPtr<FJsonValue>> Values;
+        for (const UEdGraphPin* Pin : Pins)
+        {
+            if (Pin)
+            {
+                Values.Add(MakeShared<FJsonValueObject>(PinJson(Pin)));
+            }
+        }
+        return Values;
+    }
+
+    TSharedPtr<FJsonObject> VariableDescriptionJson(const FBPVariableDescription& Variable)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        Json->SetStringField(TEXT("name"), Variable.VarName.ToString());
+        Json->SetStringField(TEXT("guid"), GuidToString(Variable.VarGuid));
+        Json->SetStringField(TEXT("friendlyName"), Variable.FriendlyName);
+        Json->SetStringField(TEXT("category"), Variable.Category.ToString());
+        Json->SetStringField(TEXT("defaultValue"), Variable.DefaultValue);
+        Json->SetStringField(TEXT("pinCategory"), Variable.VarType.PinCategory.ToString());
+        Json->SetStringField(TEXT("pinSubCategory"), Variable.VarType.PinSubCategory.ToString());
+        if (Variable.VarType.PinSubCategoryObject.IsValid())
+        {
+            Json->SetStringField(TEXT("pinSubCategoryObject"), Variable.VarType.PinSubCategoryObject->GetPathName());
+        }
+        Json->SetObjectField(TEXT("type"), PinTypeJson(Variable.VarType));
+        Json->SetObjectField(TEXT("metadata"), MetadataArrayJson(Variable.MetaDataArray));
+        Json->SetNumberField(TEXT("propertyFlags"), static_cast<double>(Variable.PropertyFlags));
+        Json->SetStringField(TEXT("repNotifyFunc"), Variable.RepNotifyFunc.ToString());
+        Json->SetStringField(TEXT("replicationCondition"), FString::FromInt(static_cast<int32>(Variable.ReplicationCondition.GetValue())));
+
+        const bool bInstanceEditable = (Variable.PropertyFlags & CPF_Edit) != 0;
+        const bool bBlueprintVisible = (Variable.PropertyFlags & CPF_BlueprintVisible) != 0;
+        const bool bBlueprintReadOnly = (Variable.PropertyFlags & CPF_BlueprintReadOnly) != 0;
+        const bool bExposeOnSpawn = Variable.HasMetaData(TEXT("ExposeOnSpawn"));
+        Json->SetBoolField(TEXT("instanceEditable"), bInstanceEditable);
+        Json->SetBoolField(TEXT("blueprintVisible"), bBlueprintVisible);
+        Json->SetBoolField(TEXT("blueprintReadOnly"), bBlueprintReadOnly);
+        Json->SetBoolField(TEXT("exposeOnSpawn"), bExposeOnSpawn);
+        Json->SetBoolField(TEXT("isExposed"), bInstanceEditable || bExposeOnSpawn || bBlueprintVisible);
+        return Json;
+    }
+
+    TSharedPtr<FJsonObject> ExportEditableObjectDefaults(UObject* Object, int32 MaxProperties = 80)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        if (!Object)
+        {
+            return Json;
+        }
+
+        int32 ExportedCount = 0;
+        for (TFieldIterator<FProperty> PropertyIt(Object->GetClass()); PropertyIt && ExportedCount < MaxProperties; ++PropertyIt)
+        {
+            FProperty* Property = *PropertyIt;
+            if (!Property || !Property->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible))
+            {
+                continue;
+            }
+            if (Property->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient | CPF_NonPIEDuplicateTransient))
+            {
+                continue;
+            }
+
+            FString Value;
+            const void* PropertyValue = Property->ContainerPtrToValuePtr<void>(Object);
+            Property->ExportTextItem_Direct(Value, PropertyValue, nullptr, Object, PPF_None);
+            if (Value.Len() > 512)
+            {
+                Value = Value.Left(512) + TEXT("...");
+            }
+            Json->SetStringField(Property->GetName(), Value);
+            ++ExportedCount;
+        }
+        return Json;
     }
 
     void AddWarning(TArray<TSharedPtr<FJsonValue>>& Warnings, const FString& Warning)
@@ -205,8 +442,24 @@ namespace
     {
         TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
         Json->SetStringField(TEXT("assetPath"), AssetData.GetObjectPathString());
+        Json->SetStringField(TEXT("assetName"), AssetData.AssetName.ToString());
         Json->SetStringField(TEXT("assetClass"), AssetData.AssetClassPath.ToString());
         Json->SetStringField(TEXT("packageName"), AssetData.PackageName.ToString());
+        Json->SetStringField(TEXT("packagePath"), AssetData.PackagePath.ToString());
+
+        TSharedPtr<FJsonObject> Tags = MakeShared<FJsonObject>();
+        for (const auto TagValue : AssetData.TagsAndValues)
+        {
+            const FString Value = TagValue.Value.AsString();
+            Tags->SetStringField(TagValue.Key.ToString(), Value.Len() > 512 ? Value.Left(512) + TEXT("...") : Value);
+        }
+        Json->SetObjectField(TEXT("tags"), Tags);
+
+        FString ParentMaterial;
+        if (AssetData.GetTagValue(TEXT("Parent"), ParentMaterial) || AssetData.GetTagValue(TEXT("ParentMaterial"), ParentMaterial))
+        {
+            Json->SetStringField(TEXT("parentMaterial"), ParentMaterial);
+        }
 
         TArray<FString> Dependencies;
         TArray<FString> Referencers;
@@ -216,7 +469,211 @@ namespace
         return Json;
     }
 
-    TArray<TSharedPtr<FJsonValue>> GraphSummaryArray(const TArray<TObjectPtr<UEdGraph>>& Graphs)
+    TSharedPtr<FJsonObject> NodeReferenceJson(const UEdGraphNode* Node)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        if (!Node)
+        {
+            return Json;
+        }
+
+        if (const UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(Node))
+        {
+            const UFunction* Function = CallNode->GetTargetFunction();
+            Json->SetStringField(TEXT("kind"), TEXT("function"));
+            Json->SetStringField(TEXT("name"), Function ? Function->GetName() : CallNode->FunctionReference.GetMemberName().ToString());
+            Json->SetStringField(TEXT("path"), Function ? Function->GetPathName() : CallNode->FunctionReference.GetMemberName().ToString());
+            if (const UClass* ParentClass = CallNode->FunctionReference.GetMemberParentClass())
+            {
+                Json->SetStringField(TEXT("parentClass"), ParentClass->GetPathName());
+            }
+            return Json;
+        }
+
+        if (const UK2Node_Variable* VariableNode = Cast<UK2Node_Variable>(Node))
+        {
+            Json->SetStringField(TEXT("kind"), TEXT("variable"));
+            Json->SetStringField(TEXT("name"), VariableNode->GetVarNameString());
+            if (const UClass* SourceClass = VariableNode->GetVariableSourceClass())
+            {
+                Json->SetStringField(TEXT("sourceClass"), SourceClass->GetPathName());
+            }
+            return Json;
+        }
+
+        if (const UK2Node_MacroInstance* MacroNode = Cast<UK2Node_MacroInstance>(Node))
+        {
+            Json->SetStringField(TEXT("kind"), TEXT("macro"));
+            if (const UEdGraph* MacroGraph = MacroNode->GetMacroGraph())
+            {
+                Json->SetStringField(TEXT("name"), MacroGraph->GetName());
+                Json->SetStringField(TEXT("path"), MacroGraph->GetPathName());
+            }
+            if (const UBlueprint* SourceBlueprint = MacroNode->GetSourceBlueprint())
+            {
+                Json->SetStringField(TEXT("sourceBlueprint"), SourceBlueprint->GetPathName());
+            }
+            return Json;
+        }
+
+        Json->SetStringField(TEXT("kind"), TEXT("none"));
+        return Json;
+    }
+
+    TSharedPtr<FJsonObject> NodeJson(const UEdGraphNode* Node)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        if (!Node)
+        {
+            return Json;
+        }
+
+        Json->SetStringField(TEXT("nodeGuid"), GuidToString(Node->NodeGuid));
+        Json->SetStringField(TEXT("nodeClass"), Node->GetClass()->GetPathName());
+        Json->SetStringField(TEXT("class"), Node->GetClass()->GetPathName());
+        Json->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+        Json->SetStringField(TEXT("fullTitle"), Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
+        Json->SetStringField(TEXT("tooltip"), Node->GetTooltipText().ToString());
+        Json->SetNumberField(TEXT("x"), Node->NodePosX);
+        Json->SetNumberField(TEXT("y"), Node->NodePosY);
+        TSharedPtr<FJsonObject> Position = MakeShared<FJsonObject>();
+        Position->SetNumberField(TEXT("x"), Node->NodePosX);
+        Position->SetNumberField(TEXT("y"), Node->NodePosY);
+        Json->SetObjectField(TEXT("position"), Position);
+
+        const UK2Node* K2Node = Cast<UK2Node>(Node);
+        Json->SetBoolField(TEXT("isPure"), K2Node ? K2Node->IsNodePure() : false);
+        Json->SetBoolField(TEXT("isK2Node"), K2Node != nullptr);
+        Json->SetObjectField(TEXT("reference"), NodeReferenceJson(Node));
+        Json->SetObjectField(TEXT("functionReference"), NodeReferenceJson(Node));
+        Json->SetArrayField(TEXT("pins"), PinArrayJson(Node->Pins));
+        return Json;
+    }
+
+    TSharedPtr<FJsonObject> GraphConnectionJson(const UEdGraphPin* FromPin, const UEdGraphPin* ToPin)
+    {
+        TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
+        Json->SetObjectField(TEXT("from"), PinConnectionJson(FromPin));
+        Json->SetObjectField(TEXT("to"), PinConnectionJson(ToPin));
+        Json->SetStringField(TEXT("type"), IsExecPin(FromPin) || IsExecPin(ToPin) ? TEXT("execution") : TEXT("data"));
+        return Json;
+    }
+
+    void AddGraphConnections(const UEdGraph* Graph, TArray<TSharedPtr<FJsonValue>>& ExecutionLines, TArray<TSharedPtr<FJsonValue>>& DataLines)
+    {
+        if (!Graph)
+        {
+            return;
+        }
+
+        TSet<FString> SeenConnections;
+        for (const UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (!Node)
+            {
+                continue;
+            }
+
+            for (const UEdGraphPin* Pin : Node->Pins)
+            {
+                if (!Pin || Pin->Direction != EGPD_Output)
+                {
+                    continue;
+                }
+
+                for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    if (!LinkedPin)
+                    {
+                        continue;
+                    }
+                    const FString Key = FString::Printf(TEXT("%s:%s>%s:%s"),
+                        *GuidToString(Pin->PinId),
+                        *Pin->PinName.ToString(),
+                        *GuidToString(LinkedPin->PinId),
+                        *LinkedPin->PinName.ToString());
+                    if (SeenConnections.Contains(Key))
+                    {
+                        continue;
+                    }
+                    SeenConnections.Add(Key);
+
+                    TSharedPtr<FJsonValueObject> ConnectionValue = MakeShared<FJsonValueObject>(GraphConnectionJson(Pin, LinkedPin));
+                    if (IsExecPin(Pin) || IsExecPin(LinkedPin))
+                    {
+                        ExecutionLines.Add(ConnectionValue);
+                    }
+                    else
+                    {
+                        DataLines.Add(ConnectionValue);
+                    }
+                }
+            }
+        }
+    }
+
+    TArray<TSharedPtr<FJsonValue>> GraphPinsByDirection(const UEdGraph* Graph, bool bInputs)
+    {
+        TArray<TSharedPtr<FJsonValue>> Values;
+        if (!Graph)
+        {
+            return Values;
+        }
+
+        for (const UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (const UK2Node_FunctionEntry* EntryNode = Cast<UK2Node_FunctionEntry>(Node))
+            {
+                if (bInputs)
+                {
+                    for (const UEdGraphPin* Pin : EntryNode->Pins)
+                    {
+                        if (Pin && Pin->Direction == EGPD_Output && !IsExecPin(Pin))
+                        {
+                            Values.Add(MakeShared<FJsonValueObject>(PinJson(Pin)));
+                        }
+                    }
+                }
+            }
+            else if (const UK2Node_FunctionResult* ResultNode = Cast<UK2Node_FunctionResult>(Node))
+            {
+                if (!bInputs)
+                {
+                    for (const UEdGraphPin* Pin : ResultNode->Pins)
+                    {
+                        if (Pin && Pin->Direction == EGPD_Input && !IsExecPin(Pin))
+                        {
+                            Values.Add(MakeShared<FJsonValueObject>(PinJson(Pin)));
+                        }
+                    }
+                }
+            }
+        }
+        return Values;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> LocalVariableArray(const UEdGraph* Graph)
+    {
+        TArray<TSharedPtr<FJsonValue>> Values;
+        if (!Graph)
+        {
+            return Values;
+        }
+
+        for (const UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (const UK2Node_FunctionEntry* EntryNode = Cast<UK2Node_FunctionEntry>(Node))
+            {
+                for (const FBPVariableDescription& LocalVariable : EntryNode->LocalVariables)
+                {
+                    Values.Add(MakeShared<FJsonValueObject>(VariableDescriptionJson(LocalVariable)));
+                }
+            }
+        }
+        return Values;
+    }
+
+    TArray<TSharedPtr<FJsonValue>> GraphSummaryArray(const TArray<TObjectPtr<UEdGraph>>& Graphs, const TCHAR* GraphKind)
     {
         TArray<TSharedPtr<FJsonValue>> Values;
         for (const UEdGraph* Graph : Graphs)
@@ -228,6 +685,8 @@ namespace
 
             TSharedPtr<FJsonObject> GraphJson = MakeShared<FJsonObject>();
             GraphJson->SetStringField(TEXT("name"), Graph->GetName());
+            GraphJson->SetStringField(TEXT("graphKind"), GraphKind);
+            GraphJson->SetStringField(TEXT("path"), Graph->GetPathName());
             GraphJson->SetNumberField(TEXT("nodeCount"), Graph->Nodes.Num());
 
             TArray<TSharedPtr<FJsonValue>> Nodes;
@@ -237,12 +696,18 @@ namespace
                 {
                     continue;
                 }
-                TSharedPtr<FJsonObject> NodeJson = MakeShared<FJsonObject>();
-                NodeJson->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
-                NodeJson->SetStringField(TEXT("class"), Node->GetClass()->GetPathName());
-                Nodes.Add(MakeShared<FJsonValueObject>(NodeJson));
+                Nodes.Add(MakeShared<FJsonValueObject>(NodeJson(Node)));
             }
             GraphJson->SetArrayField(TEXT("nodes"), Nodes);
+            GraphJson->SetArrayField(TEXT("inputs"), GraphPinsByDirection(Graph, true));
+            GraphJson->SetArrayField(TEXT("outputs"), GraphPinsByDirection(Graph, false));
+            GraphJson->SetArrayField(TEXT("localVariables"), LocalVariableArray(Graph));
+
+            TArray<TSharedPtr<FJsonValue>> ExecutionLines;
+            TArray<TSharedPtr<FJsonValue>> DataLines;
+            AddGraphConnections(Graph, ExecutionLines, DataLines);
+            GraphJson->SetArrayField(TEXT("executionLines"), ExecutionLines);
+            GraphJson->SetArrayField(TEXT("dataLines"), DataLines);
             Values.Add(MakeShared<FJsonValueObject>(GraphJson));
         }
         return Values;
@@ -301,16 +766,7 @@ namespace
         TArray<TSharedPtr<FJsonValue>> Values;
         for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
         {
-            TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
-            Json->SetStringField(TEXT("name"), Variable.VarName.ToString());
-            Json->SetStringField(TEXT("category"), Variable.Category.ToString());
-            Json->SetStringField(TEXT("pinCategory"), Variable.VarType.PinCategory.ToString());
-            Json->SetStringField(TEXT("pinSubCategory"), Variable.VarType.PinSubCategory.ToString());
-            if (Variable.VarType.PinSubCategoryObject.IsValid())
-            {
-                Json->SetStringField(TEXT("pinSubCategoryObject"), Variable.VarType.PinSubCategoryObject->GetPathName());
-            }
-            Values.Add(MakeShared<FJsonValueObject>(Json));
+            Values.Add(MakeShared<FJsonValueObject>(VariableDescriptionJson(Variable)));
         }
         return Values;
     }
@@ -347,6 +803,34 @@ namespace
             TSharedPtr<FJsonObject> Json = MakeShared<FJsonObject>();
             Json->SetStringField(TEXT("name"), Node->GetVariableName().ToString());
             Json->SetStringField(TEXT("componentClass"), ClassPathOrEmpty(Node->ComponentClass));
+            Json->SetStringField(TEXT("variableGuid"), GuidToString(Node->VariableGuid));
+            Json->SetStringField(TEXT("attachToName"), Node->AttachToName.ToString());
+            Json->SetStringField(TEXT("attachParent"), Node->ParentComponentOrVariableName.ToString());
+            Json->SetStringField(TEXT("parentComponentOwnerClassName"), Node->ParentComponentOwnerClassName.ToString());
+            Json->SetBoolField(TEXT("isParentComponentNative"), Node->bIsParentComponentNative);
+            Json->SetObjectField(TEXT("metadata"), MetadataArrayJson(Node->MetaDataArray));
+
+            TArray<FString> ChildNames;
+            for (const USCS_Node* ChildNode : Node->GetChildNodes())
+            {
+                if (ChildNode)
+                {
+                    ChildNames.Add(ChildNode->GetVariableName().ToString());
+                }
+            }
+            Json->SetArrayField(TEXT("children"), StringArrayToJson(ChildNames));
+
+            if (UActorComponent* ComponentTemplate = Node->ComponentTemplate)
+            {
+                Json->SetStringField(TEXT("templateName"), ComponentTemplate->GetName());
+                Json->SetStringField(TEXT("templatePath"), ComponentTemplate->GetPathName());
+                Json->SetObjectField(TEXT("defaultProperties"), ExportEditableObjectDefaults(ComponentTemplate));
+
+                if (const USceneComponent* SceneComponent = Cast<USceneComponent>(ComponentTemplate))
+                {
+                    Json->SetStringField(TEXT("mobility"), StaticEnum<EComponentMobility::Type>()->GetNameStringByValue(static_cast<int64>(SceneComponent->Mobility.GetValue())));
+                }
+            }
             Values.Add(MakeShared<FJsonValueObject>(Json));
         }
         return Values;
@@ -361,8 +845,9 @@ namespace
         Json->SetStringField(TEXT("generatedClass"), ClassPathOrEmpty(Blueprint->GeneratedClass));
         Json->SetArrayField(TEXT("implementedInterfaces"), InterfaceArray(Blueprint));
         Json->SetArrayField(TEXT("variables"), VariableArray(Blueprint));
-        Json->SetArrayField(TEXT("functions"), GraphSummaryArray(Blueprint->FunctionGraphs));
-        Json->SetArrayField(TEXT("eventGraphs"), GraphSummaryArray(Blueprint->UbergraphPages));
+        Json->SetArrayField(TEXT("functions"), GraphSummaryArray(Blueprint->FunctionGraphs, TEXT("Function")));
+        Json->SetArrayField(TEXT("macros"), GraphSummaryArray(Blueprint->MacroGraphs, TEXT("Macro")));
+        Json->SetArrayField(TEXT("eventGraphs"), GraphSummaryArray(Blueprint->UbergraphPages, TEXT("EventGraph")));
         Json->SetArrayField(TEXT("components"), ComponentArray(Blueprint));
         Json->SetArrayField(TEXT("calledFunctions"), CalledFunctionArray(Blueprint));
 
@@ -688,6 +1173,7 @@ TSharedPtr<FJsonObject> FAgentProjectGraphModule::ExportAssets()
     TSharedPtr<FJsonObject> Json = MakeOk();
     TArray<TSharedPtr<FJsonValue>> Warnings;
     TArray<TSharedPtr<FJsonValue>> Assets;
+    TMap<FString, int32> ClassCounts;
 
     FARFilter Filter;
     Filter.PackagePaths.Add(FName(TEXT("/Game")));
@@ -702,10 +1188,18 @@ TSharedPtr<FJsonObject> FAgentProjectGraphModule::ExportAssets()
     for (const FAssetData& AssetData : AssetDataList)
     {
         Assets.Add(MakeShared<FJsonValueObject>(AssetSummaryJson(AssetData)));
+        ClassCounts.FindOrAdd(AssetData.AssetClassPath.ToString()) += 1;
+    }
+
+    TSharedPtr<FJsonObject> ClassCountsJson = MakeShared<FJsonObject>();
+    for (const TPair<FString, int32>& Pair : ClassCounts)
+    {
+        ClassCountsJson->SetNumberField(Pair.Key, Pair.Value);
     }
 
     Json->SetArrayField(TEXT("assets"), Assets);
     Json->SetNumberField(TEXT("assetCount"), Assets.Num());
+    Json->SetObjectField(TEXT("classCounts"), ClassCountsJson);
     Json->SetArrayField(TEXT("warnings"), Warnings);
 
     FString OutputPath;

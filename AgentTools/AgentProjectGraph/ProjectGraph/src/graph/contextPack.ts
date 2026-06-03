@@ -113,7 +113,7 @@ export async function buildContextPack(
     .filter(Boolean)
     .sort();
   const importantSymbols = nodes
-    .filter((node) => ["Class", "Struct", "Enum", "Function", "Property", "Variable", "Component", "Module", "Config"].includes(node.type))
+    .filter((node) => ["Class", "Struct", "Enum", "Function", "Macro", "Property", "Variable", "Component", "Module", "Config"].includes(node.type))
     .map((node) => `${node.type}:${node.name}`)
     .sort();
   const architectureRules = [

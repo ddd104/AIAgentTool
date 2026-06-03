@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { symbolNodeId, toProjectPath, type GraphStore } from "../graph/graphStore.js";
-import type { NodeRecord, NodeType } from "../graph/schema.js";
+import type { EdgeType, NodeRecord, NodeType } from "../graph/schema.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -145,19 +145,25 @@ function assetObjectsFromJson(value: unknown): JsonObject[] {
   return [];
 }
 
-function indexFunctionLike(store: GraphStore, blueprintNode: NodeRecord, functionLike: unknown): void {
+function indexFunctionLike(
+  store: GraphStore,
+  blueprintNode: NodeRecord,
+  functionLike: unknown,
+  nodeType: Extract<NodeType, "Function" | "Macro"> = "Function",
+  edgeType: Extract<EdgeType, "HAS_FUNCTION" | "HAS_MACRO"> = "HAS_FUNCTION"
+): void {
   if (!isObject(functionLike)) return;
   const name = asString(functionLike.name) || asString(functionLike.function) || asString(functionLike.nodeTitle);
   if (!name) return;
   const functionNode = addNode(
     store,
-    "Function",
+    nodeType,
     name,
     blueprintNode.path,
-    `Blueprint function ${name} on ${blueprintNode.name}`,
+    `Blueprint ${nodeType === "Macro" ? "macro" : "function"} ${name} on ${blueprintNode.name}`,
     { blueprint: blueprintNode.path, raw: functionLike }
   );
-  store.addEdge({ from: blueprintNode.id, to: functionNode.id, type: "HAS_FUNCTION", metadata: { source: "ue-cache" } });
+  store.addEdge({ from: blueprintNode.id, to: functionNode.id, type: edgeType, metadata: { source: "ue-cache" } });
 }
 
 function indexVariable(store: GraphStore, blueprintNode: NodeRecord, variable: unknown): void {
@@ -198,7 +204,16 @@ function indexBlueprint(store: GraphStore, blueprint: JsonObject): void {
   const blueprintNode = addNode(store, "Blueprint", blueprintName, assetPath, `Blueprint ${blueprintName}`, {
     parentClass: blueprint.parentClass,
     generatedClass: blueprint.generatedClass,
-    implementedInterfaces: blueprint.implementedInterfaces
+    implementedInterfaces: blueprint.implementedInterfaces,
+    variableCount: asArray(blueprint.variables).length,
+    functionCount: asArray(blueprint.functions).length,
+    macroCount: asArray(blueprint.macros).length,
+    eventGraphCount: asArray(blueprint.eventGraphs).length,
+    componentCount: asArray(blueprint.components).length,
+    referencedAssetCount: asArray(blueprint.referencedAssets).length,
+    hasDetailedGraphIr: asArray(blueprint.functions).concat(asArray(blueprint.macros), asArray(blueprint.eventGraphs)).some((graph) => {
+      return isObject(graph) && asArray(graph.nodes).some((node) => isObject(node) && asArray(node.pins).length > 0);
+    })
   });
 
   const parentClass = asString(blueprint.parentClass);
@@ -210,6 +225,7 @@ function indexBlueprint(store: GraphStore, blueprint: JsonObject): void {
   for (const variable of asArray(blueprint.variables)) indexVariable(store, blueprintNode, variable);
   for (const component of asArray(blueprint.components)) indexComponent(store, blueprintNode, component);
   for (const graph of asArray(blueprint.functions)) indexFunctionLike(store, blueprintNode, graph);
+  for (const graph of asArray(blueprint.macros)) indexFunctionLike(store, blueprintNode, graph, "Macro", "HAS_MACRO");
   for (const graph of asArray(blueprint.eventGraphs)) indexFunctionLike(store, blueprintNode, graph);
   for (const call of asArray(blueprint.calledFunctions)) indexFunctionLike(store, blueprintNode, call);
 
