@@ -4,8 +4,8 @@
     {
       "id": "project-memory-tests",
       "description": "Build and test Project Memory System.",
-      "cwd": "AgentTools/ProjectMemorySystem",
-      "command": "npm test"
+      "cwd": "AgentTools",
+      "command": "npm run test:project-memory"
     },
     {
       "id": "project-graph-tests",

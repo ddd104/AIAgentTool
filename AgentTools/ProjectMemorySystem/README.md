@@ -16,26 +16,29 @@ Project Memory System 是独立于 Project Graph 的项目记忆工具。它读�
 ## 安装与验证
 
 ```powershell
-cd AgentTools/ProjectMemorySystem
+cd AgentTools
 npm install
-npm test
-npm run build
-node dist/src/cli.js memory status --project ../..
-node dist/src/cli.js memory context-pack "待查询内容" --project ../..
+npm run test:project-memory
+npm run build:project-memory
+node ProjectMemorySystem/dist/src/cli.js memory status --project ..
+node ProjectMemorySystem/dist/src/cli.js memory context-pack "待查询内容" --project ..
 ```
+
+Project Memory System 是 `AgentTools` 根 npm workspace 的成员，依赖应安装在 `AgentTools/node_modules`。不要在 `AgentTools/ProjectMemorySystem` 下单独运行 `npm install`，避免生成子目录 `node_modules` 并覆盖根 workspace 的依赖解析。
 
 ## CLI
 
 ```powershell
-node dist/src/cli.js memory status --project ../..
-node dist/src/cli.js memory build --project ../..
-node dist/src/cli.js memory build --docs-only --project ../..
-node dist/src/cli.js memory build --capsule --project ../..
-node dist/src/cli.js memory build --systems --project ../..
-node dist/src/cli.js memory build --patterns --project ../..
-node dist/src/cli.js memory update --project ../..
-node dist/src/cli.js memory query "keyword" --project ../..
-node dist/src/cli.js memory context-pack "{\"query\":\"enemy health bar damage UI\",\"taskType\":\"feature\"}" --project ../..
+cd AgentTools
+node ProjectMemorySystem/dist/src/cli.js memory status --project ..
+node ProjectMemorySystem/dist/src/cli.js memory build --project ..
+node ProjectMemorySystem/dist/src/cli.js memory build --docs-only --project ..
+node ProjectMemorySystem/dist/src/cli.js memory build --capsule --project ..
+node ProjectMemorySystem/dist/src/cli.js memory build --systems --project ..
+node ProjectMemorySystem/dist/src/cli.js memory build --patterns --project ..
+node ProjectMemorySystem/dist/src/cli.js memory update --project ..
+node ProjectMemorySystem/dist/src/cli.js memory query "keyword" --project ..
+node ProjectMemorySystem/dist/src/cli.js memory context-pack "{\"query\":\"enemy health bar damage UI\",\"taskType\":\"feature\"}" --project ..
 ```
 
 完整 `memory build` 会按顺序生成文档索引、项目摘要、系统摘要、模式库、validation memory、UE cache summaries 和 Implementation Memory。`memory update` 会刷新变化文档和最新 Implementation Memory 指针。

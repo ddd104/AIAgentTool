@@ -5,11 +5,15 @@
   "type": "module",
   "workspaces": [
     "AgentBlueprintTools/mcp-server",
-    "AgentProjectGraph/ProjectGraph"
+    "AgentProjectGraph/ProjectGraph",
+    "ProjectMemorySystem"
   ],
   "scripts": {
+    "build:project-memory": "npm --workspace project-memory-system run build",
+    "test:project-memory": "npm --workspace project-memory-system test",
     "build:project-graph": "npm --workspace ue-project-graph run build",
     "test:project-graph": "npm --workspace ue-project-graph test",
+    "mcp:project-memory": "node ProjectMemorySystem/dist/src/mcpServer.js",
     "mcp:blueprint": "node AgentBlueprintTools/mcp-server/server.js",
     "mcp:project-graph": "node AgentProjectGraph/ProjectGraph/dist/src/mcpServer.js"
   }

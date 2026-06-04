@@ -4,4 +4,5 @@
 - The MCP server exposes `memory_status`, `build_project_memory`, `update_project_memory`, `query_project_memory`, `get_context_pack`, and impact-related tools.
 - The system writes cache artifacts under `.ai/project-memory` and does not directly edit Unreal assets.
 - `AgentTools/ProjectMemorySystem/ProjectMemory.project.json` configures knowledge roots, memory output, source policy, graph mode, and validation inputs.
+- Project Memory System is installed as an `AgentTools` root npm workspace and should resolve dependencies from `AgentTools/node_modules`.
 - Context packs combine owning system, relevant files, architecture rules, patterns, reusable symbols, UE cache summaries, and missing information.

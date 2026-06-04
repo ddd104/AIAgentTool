@@ -93,6 +93,8 @@ Script/Binds.Cache.Headers
 AIAgentTool.sln
 .ai/
 AgentTools/node_modules/
+AgentTools/ProjectMemorySystem/node_modules/
+AgentTools/ProjectMemorySystem/package-lock.json
 AgentTools/*/ProjectGraph/.ai/
 AgentTools/*/ProjectGraph/dist/
 AgentTools/*/ProjectGraph/node_modules/
