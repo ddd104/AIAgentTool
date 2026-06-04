@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "projectId": "qirui_v25",
+  "project": {
+    "name": "qirui_v25",
+    "root": ".",
+    "uproject": "qirui_v25.uproject",
+    "primaryModule": "Source/qirui_v25",
+    "targetPlatforms": [
+      "Android"
+    ]
+  },
+  "pathRules": {
+    "pathBase": "projectRoot",
+    "allConfiguredPathsAreRelativeTo": "projectRoot"
+  },
+  "knowledgeRoots": [
+    "ProjectKnowledge",
+    "Docs",
+    "DesignDocs",
+    "TechnicalDesign",
+    "GameDesign",
+    "Tables"
+  ],
+  "memoryOutputRoot": ".ai/project-memory",
+  "sourcePolicy": {
+    "includeExtensions": [
+      ".md",
+      ".txt",
+      ".json",
+      ".jsonl",
+      ".csv",
+      ".tsv",
+      ".yaml",
+      ".yml",
+      ".ini",
+      ".xlsx",
+      ".xls",
+      ".docx",
+      ".pdf"
+    ],
+    "includePatterns": [
+      "**/*"
+    ],
+    "excludePatterns": [
+      "**/.git/**",
+      "**/.codex/**",
+      "**/.agents/**",
+      "**/.ai/project-memory/**",
+      "**/Binaries/**",
+      "**/Intermediate/**",
+      "**/DerivedDataCache/**",
+      "**/Saved/**",
+      "**/ArchivedBuilds/**",
+      "**/Releases/**",
+      "**/Build/**",
+      "**/Platforms/**",
+      "**/node_modules/**",
+      "**/*.uasset",
+      "**/*.umap",
+      "**/*.dll",
+      "**/*.so",
+      "**/*.apk",
+      "**/*.aar",
+      "**/*.jar"
+    ],
+    "sourceRoots": [
+    "Source",
+    "Plugins",
+    "Config"
+    ],
+    "excludeGlobs": [
+      "**/.git/**",
+      "**/.codex/**",
+      "**/.agents/**",
+      "**/.ai/project-memory/**",
+      "**/Binaries/**",
+      "**/Intermediate/**",
+      "**/DerivedDataCache/**",
+      "**/Saved/**",
+      "**/ArchivedBuilds/**",
+      "**/Releases/**",
+      "**/Build/**",
+      "**/Platforms/**",
+      "**/node_modules/**",
+      "**/*.uasset",
+      "**/*.umap",
+      "**/*.dll",
+      "**/*.so",
+      "**/*.apk",
+      "**/*.aar",
+      "**/*.jar"
+    ],
+    "readOnlyBinaryAssets": true
+  },
+  "memory": {
+    "language": "zh-CN",
+    "requireCitations": true,
+    "chunking": {
+      "targetChars": 1800,
+      "overlapChars": 180
+    },
+    "cache": {
+      "hashAlgorithm": "sha256",
+      "writeManifest": true,
+      "writeSourceIndex": true
+    }
+  },
+  "graph": {
+    "enabled": true,
+    "mode": "sqlite",
+    "sqlitePath": ".ai/graph/project_graph.sqlite",
+    "mcpServerName": "ue_project_graph",
+    "supportedModes": [
+      "sqlite",
+      "mcp"
+    ],
+    "optional": true,
+    "mcp": {
+      "serverName": "ue_project_graph",
+      "tools": {
+        "findFeatureContext": "find_feature_context",
+        "getContextPack": "get_context_pack",
+        "queryGraph": "query_graph",
+        "impactAnalysis": "impact_analysis"
+      }
+    },
+    "sqlite": {
+      "databasePath": ".ai/graph/project_graph.sqlite",
+      "nodesPath": ".ai/graph/nodes.jsonl",
+      "edgesPath": ".ai/graph/edges.jsonl"
+    },
+    "ueCacheRoots": {
+      "blueprints": ".ai/cache/blueprint_ir",
+      "assets": ".ai/cache/asset_registry",
+      "materials": ".ai/cache/material_ir"
+    }
+  },
+  "validation": {
+    "buildCommands": "ProjectKnowledge/validation/build_commands.json",
+    "testMap": "ProjectKnowledge/validation/test_map.json"
+  }
+}

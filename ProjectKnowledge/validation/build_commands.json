@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "commands": [
+    {
+      "id": "project-memory-tests",
+      "description": "Build and test Project Memory System.",
+      "cwd": "AgentTools/ProjectMemorySystem",
+      "command": "npm test"
+    },
+    {
+      "id": "project-graph-tests",
+      "description": "Build and test Agent ProjectGraph.",
+      "cwd": "AgentTools/AgentProjectGraph/ProjectGraph",
+      "command": "npm test"
+    },
+    {
+      "id": "blueprint-mcp-health",
+      "description": "Verify the UE editor bridge after Unreal Editor is open and AgentBlueprintTools is enabled.",
+      "cwd": ".",
+      "command": "Invoke-RestMethod -Method Get -Uri http://127.0.0.1:31055/v1/health -Headers @{ \"x-abt-token\" = \"change-me-local\" }"
+    }
+  ]
+}

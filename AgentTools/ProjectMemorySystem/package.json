@@ -1,0 +1,27 @@
+{
+  "name": "project-memory-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "memory": "dist/src/cli.js",
+    "project-memory-mcp": "dist/src/mcpServer.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "memory": "node dist/src/cli.js",
+    "mcp": "node dist/src/mcpServer.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}

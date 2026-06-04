@@ -6,22 +6,34 @@ sandbox_mode = "workspace-write"
 [sandbox_workspace_write]
 network_access = false
 
-[mcp_servers.ue5_agent_blueprint_tools]
+# Project Memory 是 Codex 的主要项目上下文入口。先构建 AgentTools/ProjectMemorySystem。
+[mcp_servers.project_memory]
 command = "node"
-args = ["AgentTools/AgentBlueprintTools/mcp-server/server.js"]
+args = ["AgentTools/ProjectMemorySystem/dist/src/mcpServer.js"]
 cwd = "."
 enabled = true
 startup_timeout_sec = 20
 tool_timeout_sec = 180
-env = { ABT_BRIDGE_URL = "http://127.0.0.1:31055", ABT_BRIDGE_TOKEN = "change-me-local" }
+env = { PROJECT_MEMORY_ROOT = ".", PROJECT_MEMORY_CONFIG = "AgentTools/ProjectMemorySystem/ProjectMemory.project.json" }
+enabled_tools = [
+  "memory_status",
+  "build_project_memory",
+  "update_project_memory",
+  "query_project_memory",
+  "get_project_capsule",
+  "find_owning_system",
+  "find_existing_patterns",
+  "get_context_pack",
+  "impact_analysis"
+]
 
-# ProjectGraph MCP server. Disabled by default; set enabled=true after running
-# `npm install && npm run build:project-graph` in AgentTools.
+#请在 AgentTools 目录下运行
+# `npm install && npm run build:project-graph` 后，将 enabled 设置为 true。
 [mcp_servers.ue_project_graph]
 command = "node"
 args = ["AgentTools/AgentProjectGraph/ProjectGraph/dist/src/mcpServer.js"]
 cwd = "."
-enabled = false
+enabled = true
 startup_timeout_sec = 20
 tool_timeout_sec = 180
 env = { PROJECT_GRAPH_ROOT = "." }
@@ -36,23 +48,30 @@ enabled_tools = [
   "impact_analysis"
 ]
 
-# UE Editor MCP placeholder alias for future editor-facing tools. The existing
-# ue5-agent-blueprint-tools-mcp server above remains the active bridge today.
+# 面向编辑器的工具
 [mcp_servers.ue_editor]
 command = "node"
 args = ["AgentTools/AgentBlueprintTools/mcp-server/server.js"]
 cwd = "."
-enabled = false
+enabled = true
 startup_timeout_sec = 20
 tool_timeout_sec = 180
 env = { ABT_BRIDGE_URL = "http://127.0.0.1:31055", ABT_BRIDGE_TOKEN = "change-me-local" }
 enabled_tools = [
+  "ping_ue_bridge",
   "read_blueprint",
   "analyze_blueprint_graph",
+  "list_callable_functions",
   "dry_run_blueprint_patch",
   "apply_blueprint_patch",
   "compile_blueprint",
   "read_material",
   "patch_material",
-  "create_asset"
+  "analyze_performance",
+  "dry_run_performance_optimization",
+  "create_asset",
+  "import_assets",
+  "read_asset",
+  "set_asset_property",
+  "place_actor"
 ]

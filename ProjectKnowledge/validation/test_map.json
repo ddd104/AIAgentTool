@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "tests": [
+    {
+      "area": "ProjectMemorySystem",
+      "commandId": "project-memory-tests",
+      "covers": [
+        "MCP command implementations",
+        "document indexing",
+        "context pack generation",
+        "memory freshness detection"
+      ]
+    },
+    {
+      "area": "AgentProjectGraph",
+      "commandId": "project-graph-tests",
+      "covers": [
+        "graph schema validation",
+        "C++ indexing",
+        "context pack generation",
+        "UE cache fixture indexing"
+      ]
+    },
+    {
+      "area": "AgentBlueprintTools",
+      "commandId": "blueprint-mcp-health",
+      "covers": [
+        "UE Editor bridge availability",
+        "bridge token alignment",
+        "localhost port availability"
+      ]
+    }
+  ]
+}
