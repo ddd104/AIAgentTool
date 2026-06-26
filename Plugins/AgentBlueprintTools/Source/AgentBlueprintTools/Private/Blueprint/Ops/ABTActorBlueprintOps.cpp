@@ -253,7 +253,7 @@ namespace
         }
     }
 
-    bool ConnectPins(UEdGraphPin* From, UEdGraphPin* To, FString& OutError)
+    bool TryConnectPins(UEdGraphPin* From, UEdGraphPin* To, FString& OutError)
     {
         if (!From || !To)
         {
@@ -693,12 +693,12 @@ namespace
         }
 
         UK2Node_VariableGet* PromptGet = AddVariableGetNode(Graph, PromptComponentName, X - 220, Y + 90);
-        if (!ConnectPins(
+        if (!TryConnectPins(
             ABT::Blueprint::FindPinByName(PromptGet, PromptComponentName),
             ABT::Blueprint::FindPinByName(Call, TEXT("self")),
             OutError))
         {
-            if (!ConnectPins(
+            if (!TryConnectPins(
                 ABT::Blueprint::FindPinByName(PromptGet, PromptComponentName),
                 ABT::Blueprint::FindPinByName(Call, TEXT("Target")),
                 OutError))
@@ -1182,13 +1182,13 @@ namespace ABT::Blueprint::Ops
             return false;
         }
         SetPinDefaultValue(ABT::Blueprint::FindPinByName(GetPcForEnable, TEXT("PlayerIndex")), TEXT("0"));
-        if (!ConnectPins(ABT::Blueprint::FindFirstPin(BeginOverlap, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(SetCanInteractTrue, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindFirstPin(SetCanInteractTrue, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(EnableInput, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindPinByName(GetPcForEnable, TEXT("ReturnValue")), ABT::Blueprint::FindPinByName(EnableInput, TEXT("PlayerController")), OutError))
+        if (!TryConnectPins(ABT::Blueprint::FindFirstPin(BeginOverlap, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(SetCanInteractTrue, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindFirstPin(SetCanInteractTrue, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(EnableInput, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindPinByName(GetPcForEnable, TEXT("ReturnValue")), ABT::Blueprint::FindPinByName(EnableInput, TEXT("PlayerController")), OutError))
         {
             return false;
         }
-        if (ShowPrompt && !ConnectPins(ABT::Blueprint::FindFirstPin(EnableInput, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(ShowPrompt, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError))
+        if (ShowPrompt && !TryConnectPins(ABT::Blueprint::FindFirstPin(EnableInput, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(ShowPrompt, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError))
         {
             return false;
         }
@@ -1204,13 +1204,13 @@ namespace ABT::Blueprint::Ops
             return false;
         }
         SetPinDefaultValue(ABT::Blueprint::FindPinByName(GetPcForDisable, TEXT("PlayerIndex")), TEXT("0"));
-        if (!ConnectPins(ABT::Blueprint::FindFirstPin(EndOverlap, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(SetCanInteractFalse, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindFirstPin(SetCanInteractFalse, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(DisableInput, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindPinByName(GetPcForDisable, TEXT("ReturnValue")), ABT::Blueprint::FindPinByName(DisableInput, TEXT("PlayerController")), OutError))
+        if (!TryConnectPins(ABT::Blueprint::FindFirstPin(EndOverlap, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(SetCanInteractFalse, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindFirstPin(SetCanInteractFalse, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(DisableInput, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindPinByName(GetPcForDisable, TEXT("ReturnValue")), ABT::Blueprint::FindPinByName(DisableInput, TEXT("PlayerController")), OutError))
         {
             return false;
         }
-        if (HidePrompt && !ConnectPins(ABT::Blueprint::FindFirstPin(DisableInput, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(HidePrompt, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError))
+        if (HidePrompt && !TryConnectPins(ABT::Blueprint::FindFirstPin(DisableInput, EGPD_Output, UEdGraphSchema_K2::PC_Exec), ABT::Blueprint::FindFirstPin(HidePrompt, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError))
         {
             return false;
         }
@@ -1229,14 +1229,14 @@ namespace ABT::Blueprint::Ops
         UK2Node_VariableSet* SetInactive = AddVariableSetNode(Graph, IsActiveVar, false, -180, 460);
         UK2Node_VariableSet* SetActive = AddVariableSetNode(Graph, IsActiveVar, true, -180, 700);
 
-        if (!ConnectPins(InputKeyNode->GetPressedPin(), CanInteractBranch->GetExecPin(), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindPinByName(GetCanInteract, CanInteractVar), CanInteractBranch->GetConditionPin(), OutError) ||
-            !ConnectPins(CanInteractBranch->GetThenPin(), IsActiveBranch->GetExecPin(), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindPinByName(GetIsActive, IsActiveVar), IsActiveBranch->GetConditionPin(), OutError) ||
-            !ConnectPins(IsActiveBranch->GetThenPin(), ABT::Blueprint::FindFirstPin(SetInactive, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
-            !ConnectPins(IsActiveBranch->GetElsePin(), ABT::Blueprint::FindFirstPin(SetActive, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindFirstPin(SetInactive, EGPD_Output, UEdGraphSchema_K2::PC_Exec), TimelineNode->GetReverseFromEndPin(), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindFirstPin(SetActive, EGPD_Output, UEdGraphSchema_K2::PC_Exec), TimelineNode->GetPlayFromStartPin(), OutError))
+        if (!TryConnectPins(InputKeyNode->GetPressedPin(), CanInteractBranch->GetExecPin(), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindPinByName(GetCanInteract, CanInteractVar), CanInteractBranch->GetConditionPin(), OutError) ||
+            !TryConnectPins(CanInteractBranch->GetThenPin(), IsActiveBranch->GetExecPin(), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindPinByName(GetIsActive, IsActiveVar), IsActiveBranch->GetConditionPin(), OutError) ||
+            !TryConnectPins(IsActiveBranch->GetThenPin(), ABT::Blueprint::FindFirstPin(SetInactive, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
+            !TryConnectPins(IsActiveBranch->GetElsePin(), ABT::Blueprint::FindFirstPin(SetActive, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindFirstPin(SetInactive, EGPD_Output, UEdGraphSchema_K2::PC_Exec), TimelineNode->GetReverseFromEndPin(), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindFirstPin(SetActive, EGPD_Output, UEdGraphSchema_K2::PC_Exec), TimelineNode->GetPlayFromStartPin(), OutError))
         {
             return false;
         }
@@ -1257,10 +1257,10 @@ namespace ABT::Blueprint::Ops
         SetPinDefaultValue(ABT::Blueprint::FindPinByName(SetRelativeRotation, TEXT("bSweep")), TEXT("false"));
         SetPinDefaultValue(ABT::Blueprint::FindPinByName(SetRelativeRotation, TEXT("bTeleport")), TEXT("false"));
 
-        if (!ConnectPins(TimelineNode->GetUpdatePin(), ABT::Blueprint::FindFirstPin(SetRelativeRotation, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindPinByName(TimelineNode, TrackName.ToString()), ABT::Blueprint::FindPinByName(Lerp, TEXT("Alpha")), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindPinByName(Lerp, TEXT("ReturnValue")), ABT::Blueprint::FindPinByName(MakeRotator, TEXT("Yaw")), OutError) ||
-            !ConnectPins(ABT::Blueprint::FindPinByName(MakeRotator, TEXT("ReturnValue")), ABT::Blueprint::FindPinByName(SetRelativeRotation, TEXT("NewRotation")), OutError))
+        if (!TryConnectPins(TimelineNode->GetUpdatePin(), ABT::Blueprint::FindFirstPin(SetRelativeRotation, EGPD_Input, UEdGraphSchema_K2::PC_Exec), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindPinByName(TimelineNode, TrackName.ToString()), ABT::Blueprint::FindPinByName(Lerp, TEXT("Alpha")), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindPinByName(Lerp, TEXT("ReturnValue")), ABT::Blueprint::FindPinByName(MakeRotator, TEXT("Yaw")), OutError) ||
+            !TryConnectPins(ABT::Blueprint::FindPinByName(MakeRotator, TEXT("ReturnValue")), ABT::Blueprint::FindPinByName(SetRelativeRotation, TEXT("NewRotation")), OutError))
         {
             return false;
         }
@@ -1270,7 +1270,7 @@ namespace ABT::Blueprint::Ops
         {
             RotationTargetPin = ABT::Blueprint::FindPinByName(SetRelativeRotation, TEXT("Target"));
         }
-        if (!ConnectPins(ABT::Blueprint::FindPinByName(GetRotationComponent, RotationComponentName), RotationTargetPin, OutError))
+        if (!TryConnectPins(ABT::Blueprint::FindPinByName(GetRotationComponent, RotationComponentName), RotationTargetPin, OutError))
         {
             return false;
         }
